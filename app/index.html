@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Org Chart Creator - Dashboard</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div>
+                <h1>Dynamic Org Chart Creator</h1>
+                <p>Create, manage, and visualize organizational structures</p>
+            </div>
+            <div class="toolbar-group">
+                <button class="btn btn-secondary btn-sm" onclick="app.exportAllData()">
+                    <span>💾</span> Backup Data
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="app.importData()">
+                    <span>📥</span> Import Data
+                </button>
+                <button class="btn btn-primary" onclick="app.showCreateModal()">
+                    <span>➕</span> New Chart
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Search and Filter Toolbar -->
+        <div class="toolbar">
+            <div class="search-box">
+                <span class="search-icon">🔍</span>
+                <input
+                    type="text"
+                    class="search-input"
+                    placeholder="Search charts..."
+                    id="searchInput"
+                    oninput="app.filterCharts(this.value)"
+                >
+            </div>
+            <div class="toolbar-group">
+                <label class="form-label" style="margin: 0; margin-right: 0.5rem;">Filter by Department:</label>
+                <select class="form-select" id="departmentFilter" onchange="app.filterByDepartment(this.value)" style="width: auto;">
+                    <option value="">All Departments</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Charts Grid -->
+        <div id="chartsContainer" class="mt-4">
+            <!-- Charts will be rendered here -->
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <div class="empty-state-icon">📊</div>
+            <h2 class="empty-state-title">No org charts yet</h2>
+            <p class="empty-state-text">Create your first organizational chart to get started</p>
+            <button class="btn btn-primary btn-lg" onclick="app.showCreateModal()">
+                <span>➕</span> Create Your First Chart
+            </button>
+        </div>
+    </div>
+
+    <!-- Create/Edit Chart Modal -->
+    <div id="chartModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title" id="modalTitle">Create New Chart</h2>
+                <button class="modal-close" onclick="app.closeModal()">×</button>
+            </div>
+            <form id="chartForm" onsubmit="app.saveChart(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label class="form-label" for="chartName">Chart Name *</label>
+                        <input
+                            type="text"
+                            id="chartName"
+                            class="form-input"
+                            placeholder="e.g., Engineering Department - Q4 2025"
+                            required
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="departmentTag">Department Tag</label>
+                        <input
+                            type="text"
+                            id="departmentTag"
+                            class="form-input"
+                            placeholder="e.g., Engineering, Sales, Marketing"
+                            list="departmentList"
+                        >
+                        <datalist id="departmentList"></datalist>
+                        <p class="form-help">Tag this chart by department for easier filtering</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="description">Description</label>
+                        <textarea
+                            id="description"
+                            class="form-textarea"
+                            placeholder="Optional description of this org chart..."
+                        ></textarea>
+                    </div>
+
+                    <input type="hidden" id="chartId">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="app.closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Chart</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/storage.js"></script>
+    <script src="js/dashboard.js"></script>
+</body>
+</html>
