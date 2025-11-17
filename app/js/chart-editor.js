@@ -17,41 +17,6 @@ class ChartEditor {
     }
 
     /**
-     * Escape HTML to prevent XSS attacks
-     * @param {string} text - Text to escape
-     * @returns {string} Escaped text safe for HTML insertion
-     */
-    escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    /**
-     * Calculate node height based on content
-     * @param {Object} node - Node data
-     * @returns {number} Calculated height in pixels
-     */
-    calculateNodeHeight(node) {
-        const hasMembers = node.members && node.members.length > 0;
-
-        if (hasMembers) {
-            // NEW FORMAT: Dynamic height based on roles and people
-            const baseHeight = 60;
-            const roleHeight = node.members.length * 20;
-            const totalPeople = node.members.reduce((sum, role) =>
-                sum + (role.entries?.length || 0), 0
-            );
-            const peopleHeight = totalPeople * 22;
-            return Math.max(baseHeight + roleHeight + peopleHeight, 100);
-        } else {
-            // LEGACY FORMAT: Fixed height
-            return 150;
-        }
-    }
-
-    /**
      * Ensure hierarchy always has exactly one root and no dangling parents
      * @param {Object} options
      * @param {boolean} options.persist - whether to save fixes immediately
@@ -218,7 +183,7 @@ class ChartEditor {
             .nodeWidth(() => 250)
             .nodeHeight((d) => {
                 const node = d.data || d;
-                return self.calculateNodeHeight(node);
+                return OrgNodeRenderer.calculateNodeHeight(node);
             })
             .childrenMargin(() => 80)
             .compactMarginBetween(() => 25)
@@ -228,67 +193,7 @@ class ChartEditor {
             .onNodeClick((d) => {
                 self.editNode(d.data.id);
             })
-            .nodeContent((d) => {
-                const node = d.data;
-
-                // Check if this is a multi-person node (new format) or legacy single-person node
-                const hasMembers = node.members && node.members.length > 0;
-
-                if (hasMembers) {
-                    // NEW FORMAT: Multi-person node
-                    let rolesHTML = '';
-
-                    node.members.forEach(roleGroup => {
-                        const roleTitle = self.escapeHtml(roleGroup.roleLabel || 'Team Members');
-                        const people = roleGroup.entries || [];
-
-                        const peopleHTML = people.map(person => {
-                            const escapedName = self.escapeHtml(person.name || 'Unnamed');
-
-                            return `
-                                <div class="person-row">
-                                    <div class="person-name">${escapedName}</div>
-                                </div>
-                            `;
-                        }).join('');
-
-                        rolesHTML += `
-                            <div class="role-section">
-                                <div class="role-title">${roleTitle}</div>
-                                <div class="people-list">${peopleHTML}</div>
-                            </div>
-                        `;
-                    });
-
-                    // Use shared height calculation
-                    const calculatedHeight = self.calculateNodeHeight(node);
-
-                    // Escape department/header text (leave blank if not provided)
-                    const department = node.meta?.department || node.department || '';
-                    const headerText = department ? self.escapeHtml(department) : '';
-
-                    return `
-                        <div class="org-chart-node multi-person" style="width: ${d.width}px; min-height: ${calculatedHeight}px; height: auto;">
-                            <div class="node-header">${headerText}</div>
-                            <div class="node-body">${rolesHTML}</div>
-                        </div>
-                    `;
-                } else {
-                    // LEGACY FORMAT: Single-person node (backward compatibility)
-                    // Escape all legacy fields
-                    const escapedName = self.escapeHtml(node.name || 'Unnamed');
-                    const escapedTitle = self.escapeHtml(node.title || 'No Title');
-                    const escapedDept = node.department ? self.escapeHtml(node.department) : '';
-
-                    return `
-                        <div class="org-chart-node legacy" style="width: ${d.width}px; height: ${d.height}px; display: flex; flex-direction: column; justify-content: center;">
-                            <div class="node-name">${escapedName}</div>
-                            <div class="node-title">${escapedTitle}</div>
-                            ${escapedDept ? `<div class="node-department">${escapedDept}</div>` : ''}
-                        </div>
-                    `;
-                }
-            })
+            .nodeContent((d) => OrgNodeRenderer.renderNodeContent(d))
             .render();
     }
 
@@ -485,13 +390,18 @@ class ChartEditor {
             return;
         }
 
+        // Preserve existing meta data when editing, only update department
+        const existingNode = this.editingNodeId
+            ? this.chartData.nodes.find(n => n.id === nodeId)
+            : null;
+
         const nodeData = {
             id: nodeId,
             parentId: parentId,
             members: members,
             meta: {
-                department: document.getElementById('nodeDepartment').value.trim(),
-                notes: ''
+                ...((existingNode && existingNode.meta) || {}), // Preserve all existing meta fields
+                department: document.getElementById('nodeDepartment').value.trim()
             }
         };
 
@@ -794,7 +704,9 @@ class ChartEditor {
             roleGroup.entries.forEach((person, personIndex) => {
                 const personDiv = document.createElement('div');
                 personDiv.className = 'person-entry';
+                personDiv.style.cssText = 'display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 4px; margin-bottom: 0.5rem;';
 
+                // Name input
                 const nameInput = document.createElement('input');
                 nameInput.type = 'text';
                 nameInput.className = 'form-input';
@@ -805,13 +717,24 @@ class ChartEditor {
                 nameInput.dataset.personIndex = personIndex;
                 nameInput.dataset.field = 'name';
 
+                // Hidden field to preserve photoUrl
+                const photoUrlInput = document.createElement('input');
+                photoUrlInput.type = 'hidden';
+                photoUrlInput.value = person.photoUrl || '';
+                photoUrlInput.dataset.roleIndex = roleIndex;
+                photoUrlInput.dataset.personIndex = personIndex;
+                photoUrlInput.dataset.field = 'photoUrl';
+
+                // Delete button
                 const deletePersonBtn = document.createElement('button');
                 deletePersonBtn.type = 'button';
                 deletePersonBtn.className = 'btn btn-danger btn-sm';
-                deletePersonBtn.textContent = '✖';
+                deletePersonBtn.textContent = '✖ Remove Person';
+                deletePersonBtn.style.cssText = 'align-self: flex-end;';
                 deletePersonBtn.onclick = () => this.removePerson(roleIndex, personIndex);
 
                 personDiv.appendChild(nameInput);
+                personDiv.appendChild(photoUrlInput);
                 personDiv.appendChild(deletePersonBtn);
 
                 peopleContainer.appendChild(personDiv);
@@ -844,11 +767,22 @@ class ChartEditor {
             const roleLabel = roleInput ? roleInput.value : '';
 
             const entries = [];
-            roleEl.querySelectorAll('input[data-field="name"]').forEach(input => {
-                entries.push({ name: input.value || '' });
+            // Find all person entries within this role
+            const personEntries = roleEl.querySelectorAll('.person-entry');
+            personEntries.forEach(personEl => {
+                const nameInput = personEl.querySelector('input[data-field="name"]');
+                const photoUrlInput = personEl.querySelector('input[data-field="photoUrl"]');
+
+                entries.push({
+                    name: nameInput ? nameInput.value || '' : '',
+                    photoUrl: photoUrlInput ? photoUrlInput.value || '' : ''
+                });
             });
 
-            draft.push({ roleLabel, entries: entries.length ? entries : [{ name: '' }] });
+            draft.push({
+                roleLabel,
+                entries: entries.length ? entries : [{ name: '', photoUrl: '' }]
+            });
         });
 
         this.draftMembers = draft;
@@ -863,7 +797,7 @@ class ChartEditor {
         // Works for both new and existing nodes via draft state
         this.draftMembers.push({
             roleLabel: '',
-            entries: [{ name: '' }]
+            entries: [{ name: '', email: '', phone: '', photoUrl: '' }]
         });
 
         this.renderRoleBuilder(this.draftMembers);
@@ -891,7 +825,7 @@ class ChartEditor {
 
         this.captureDraftMembersFromUI();
 
-        this.draftMembers[roleIndex].entries.push({ name: '' });
+        this.draftMembers[roleIndex].entries.push({ name: '', photoUrl: '' });
         this.renderRoleBuilder(this.draftMembers);
     }
 
@@ -915,6 +849,7 @@ class ChartEditor {
 
     /**
      * Collect data from role builder form
+     * Preserves all metadata: name, email, phone, photoUrl
      */
     collectRoleBuilderData() {
         const members = [];
@@ -924,15 +859,27 @@ class ChartEditor {
             const roleIndex = parseInt(input.dataset.roleIndex);
             const roleLabel = input.value.trim() || 'Team Members';
 
-            const peopleInputs = document.querySelectorAll(`[data-role-index="${roleIndex}"][data-field="name"]`);
+            // Get all person entries for this role
+            const personEntries = document.querySelectorAll(`.person-entry`);
             const entries = [];
 
-            peopleInputs.forEach(nameInput => {
-                const personIndex = nameInput.dataset.personIndex;
+            personEntries.forEach(personEl => {
+                const nameInput = personEl.querySelector(`input[data-role-index="${roleIndex}"][data-field="name"]`);
+                if (!nameInput) return; // Not for this role
+
+                const emailInput = personEl.querySelector(`input[data-role-index="${roleIndex}"][data-field="email"]`);
+                const phoneInput = personEl.querySelector(`input[data-role-index="${roleIndex}"][data-field="phone"]`);
+                const photoUrlInput = personEl.querySelector(`input[data-role-index="${roleIndex}"][data-field="photoUrl"]`);
+
                 const name = nameInput.value.trim();
                 if (!name) return; // Skip empty names
 
-                entries.push({ name });
+                entries.push({
+                    name: name,
+                    email: emailInput ? emailInput.value.trim() : '',
+                    phone: phoneInput ? phoneInput.value.trim() : '',
+                    photoUrl: photoUrlInput ? photoUrlInput.value : ''
+                });
             });
 
             if (entries.length > 0) {

@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dynamic Org Chart Creator - Dashboard</title>
     <link rel="stylesheet" href="css/styles.css">
+
+    <!-- Org Chart Dependencies for Bulk Export - Lazy loaded on demand -->
+    <!-- Moved to dashboard.js loadExportDependencies() method -->
+
+    <!-- Note: Org chart node styles are defined in css/styles.css -->
+    <!-- The bulk export pipeline dynamically fetches and injects styles.css with resolved CSS variables -->
+    <!-- This ensures consistent styling between the UI and exported PDFs -->
 </head>
 <body>
     <!-- Header -->
@@ -15,6 +22,9 @@
                 <p>Create, manage, and visualize organizational structures</p>
             </div>
             <div class="toolbar-group">
+                <button class="btn btn-secondary btn-sm" onclick="app.exportAllChartsToPDF()">
+                    <span>📄</span> Export All to PDF
+                </button>
                 <button class="btn btn-secondary btn-sm" onclick="app.exportAllData()">
                     <span>💾</span> Backup Data
                 </button>
@@ -120,6 +130,9 @@
 
     <!-- Scripts -->
     <script src="js/storage.js"></script>
+    <script src="js/org-node-renderer.js"></script>
+    <script src="js/export-template.js"></script>
     <script src="js/dashboard.js"></script>
+    <!-- bulk-export.js is lazy loaded on demand -->
 </body>
 </html>
