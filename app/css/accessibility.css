@@ -1,0 +1,454 @@
+/**
+ * Accessibility Enhancements
+ * WCAG 2.1 AA Compliant Focus Indicators, ARIA Support, and Reduced Motion
+ */
+
+/* ========================================
+   FOCUS INDICATORS - Visible & Distinct
+   ======================================== */
+
+/* Global focus style - highly visible 3px outline */
+*:focus {
+    outline: 3px solid var(--focus-ring-color, #0085f2);
+    outline-offset: 2px;
+}
+
+/* Remove default outline for mouse users, keep for keyboard */
+*:focus:not(:focus-visible) {
+    outline: none;
+}
+
+/* Ensure focus-visible works for keyboard navigation */
+*:focus-visible {
+    outline: 3px solid var(--focus-ring-color, #0085f2);
+    outline-offset: 2px;
+}
+
+/* Focus ring color - adjusts for dark mode */
+:root {
+    --focus-ring-color: #0085f2;
+    --focus-ring-color-danger: #ef4444;
+}
+
+[data-theme="dark"] {
+    --focus-ring-color: #4db3fb;
+    --focus-ring-color-danger: #f87171;
+}
+
+/* Button focus states */
+.btn:focus-visible {
+    outline: 3px solid var(--focus-ring-color);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 5px rgba(0, 133, 242, 0.15);
+}
+
+.btn-danger:focus-visible,
+.btn-ghost-danger:focus-visible {
+    outline-color: var(--focus-ring-color-danger);
+    box-shadow: 0 0 0 5px rgba(239, 68, 68, 0.15);
+}
+
+/* Link focus states */
+a:focus-visible {
+    outline: 3px solid var(--focus-ring-color);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+}
+
+/* Form input focus states - enhanced */
+.form-input:focus-visible,
+.form-select:focus-visible,
+.form-textarea:focus-visible,
+.search-input:focus-visible {
+    outline: 3px solid var(--focus-ring-color);
+    outline-offset: 1px;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 4px rgba(0, 133, 242, 0.1);
+}
+
+/* Card focus states (for keyboard navigation) */
+.chart-card:focus-visible {
+    outline: 3px solid var(--focus-ring-color);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 5px rgba(0, 133, 242, 0.1);
+}
+
+/* Modal close button focus */
+.modal-close:focus-visible {
+    outline: 3px solid var(--focus-ring-color);
+    outline-offset: 2px;
+    background: var(--background-secondary);
+}
+
+/* Icon button focus */
+.btn-icon:focus-visible,
+.action-menu-trigger:focus-visible {
+    outline: 3px solid var(--focus-ring-color);
+    outline-offset: 2px;
+    background: var(--background-tertiary);
+}
+
+/* ========================================
+   SKIP NAVIGATION LINK
+   ======================================== */
+
+.skip-link {
+    position: absolute;
+    top: -100px;
+    left: 10px;
+    z-index: 10000;
+    padding: 0.75rem 1.5rem;
+    background: var(--rrc-blue);
+    color: white;
+    text-decoration: none;
+    border-radius: var(--radius);
+    font-weight: 600;
+    font-size: 0.875rem;
+    box-shadow: var(--shadow-xl);
+    transition: top 0.2s ease;
+}
+
+.skip-link:focus {
+    top: 10px;
+    outline: 3px solid white;
+    outline-offset: 2px;
+}
+
+/* ========================================
+   ARIA LIVE REGIONS
+   ======================================== */
+
+/* Screen reader only class */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
+/* Make live region announcements visible for testing */
+.aria-live-region {
+    position: absolute;
+    left: -10000px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}
+
+/* Status indicator with proper ARIA */
+.save-status[role="status"] {
+    /* Ensures screen readers announce changes */
+}
+
+/* ========================================
+   REDUCED MOTION SUPPORT
+   ======================================== */
+
+@media (prefers-reduced-motion: reduce) {
+    /* Disable all animations */
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    /* Remove transforms that might cause motion */
+    .chart-card:hover {
+        transform: none;
+    }
+
+    .btn:hover:not(:disabled) {
+        transform: none;
+    }
+
+    /* Keep opacity changes but remove motion */
+    .toast {
+        animation: none;
+        opacity: 1;
+        transform: none;
+    }
+
+    /* Disable skeleton loading animation */
+    .skeleton {
+        animation: none;
+    }
+
+    /* Disable slide animations */
+    .node-editor-sidebar {
+        transition: none;
+    }
+
+    .modal {
+        transition: none;
+    }
+
+    /* Disable collapsible toggle rotation */
+    .collapsible-toggle {
+        transition: none;
+    }
+
+    .collapsible-section.expanded .collapsible-toggle {
+        transform: none;
+    }
+}
+
+/* ========================================
+   KEYBOARD NAVIGATION HELPERS
+   ======================================== */
+
+/* Show focus outline on keyboard navigation mode */
+body.keyboard-nav *:focus {
+    outline: 3px solid var(--focus-ring-color);
+    outline-offset: 2px;
+}
+
+/* Remove focus outline for mouse clicks */
+body.mouse-nav *:focus {
+    outline: none;
+}
+
+/* Restore focus outline for keyboard after mouse click */
+body.keyboard-nav *:focus-visible {
+    outline: 3px solid var(--focus-ring-color);
+    outline-offset: 2px;
+}
+
+/* ========================================
+   HIGH CONTRAST MODE SUPPORT
+   ======================================== */
+
+@media (prefers-contrast: high) {
+    /* Increase border contrast */
+    .chart-card,
+    .card,
+    .modal-content,
+    .form-input,
+    .form-select,
+    .form-textarea {
+        border-width: 2px;
+        border-color: currentColor;
+    }
+
+    /* Increase button contrast */
+    .btn {
+        border: 2px solid currentColor;
+    }
+
+    /* Make focus indicators even more visible */
+    *:focus-visible {
+        outline-width: 4px;
+    }
+}
+
+/* ========================================
+   TOUCH TARGET SIZES (Minimum 44x44px)
+   ======================================== */
+
+/* Ensure all interactive elements meet minimum touch target size */
+@media (pointer: coarse) {
+    /* Mobile/touch devices */
+    .btn-sm {
+        min-height: 44px;
+        padding: 0.5rem 1rem;
+    }
+
+    .action-menu-trigger {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .modal-close {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .btn-icon {
+        min-height: 44px;
+        min-width: 44px;
+    }
+
+    .person-entry-row .btn {
+        min-width: 44px;
+        min-height: 44px;
+    }
+}
+
+/* ========================================
+   ARIA LANDMARK ROLES (Styling)
+   ======================================== */
+
+/* Header landmark */
+header[role="banner"],
+.header {
+    /* Ensure header is clearly defined */
+}
+
+/* Main content landmark */
+main[role="main"],
+.container {
+    /* Ensure main content is clearly defined */
+}
+
+/* Navigation landmark */
+nav[role="navigation"] {
+    /* Ensure navigation is clearly defined */
+}
+
+/* ========================================
+   IMPROVED LINK ACCESSIBILITY
+   ======================================== */
+
+/* External link indicator (for screen readers) */
+a[target="_blank"]::after {
+    content: " (opens in new window)";
+    position: absolute;
+    left: -10000px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}
+
+/* ========================================
+   FORM ERROR STATES
+   ======================================== */
+
+/* Error state for form inputs */
+.form-input[aria-invalid="true"],
+.form-select[aria-invalid="true"],
+.form-textarea[aria-invalid="true"] {
+    border-color: var(--danger-color);
+    outline-color: var(--danger-color);
+}
+
+.form-input[aria-invalid="true"]:focus-visible {
+    outline: 3px solid var(--danger-color);
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.1);
+}
+
+/* Error message styling */
+.form-error {
+    color: var(--danger-color);
+    font-size: 0.875rem;
+    margin-top: 0.375rem;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.form-error::before {
+    content: "⚠";
+    font-weight: bold;
+}
+
+/* ========================================
+   LOADING STATE ACCESSIBILITY
+   ======================================== */
+
+/* Loading spinner with ARIA */
+.loading-spinner[role="status"] {
+    /* Ensure loading states are announced */
+}
+
+/* Skeleton loading accessibility */
+.skeleton {
+    background: linear-gradient(90deg, var(--background-secondary) 25%, var(--background-tertiary) 50%, var(--background-secondary) 75%);
+}
+
+.skeleton::before {
+    content: "Loading content";
+    position: absolute;
+    left: -10000px;
+}
+
+/* ========================================
+   MODAL ACCESSIBILITY
+   ======================================== */
+
+/* Ensure modal backdrop blocks interaction with background */
+.modal[role="dialog"],
+.modal.active {
+    /* Modal already has proper overlay */
+}
+
+/* Modal close button should be clearly focusable */
+.modal-close[aria-label] {
+    /* Button already has aria-label in HTML */
+}
+
+/* ========================================
+   EMPTY STATE ACCESSIBILITY
+   ======================================== */
+
+.empty-state {
+    /* Ensure empty states are properly announced */
+}
+
+.empty-state-title {
+    /* Already has proper heading structure */
+}
+
+/* ========================================
+   TOAST NOTIFICATION ACCESSIBILITY
+   ======================================== */
+
+/* Toast should announce to screen readers */
+.toast[role="status"],
+.toast[role="alert"] {
+    /* Toast notifications with proper roles */
+}
+
+/* ========================================
+   PRINT STYLES (Accessibility for Print)
+   ======================================== */
+
+@media print {
+    /* Hide interactive elements in print */
+    .btn,
+    .modal,
+    .toast-container,
+    .skip-link {
+        display: none !important;
+    }
+
+    /* Ensure focus indicators don't print */
+    *:focus,
+    *:focus-visible {
+        outline: none !important;
+    }
+
+    /* Ensure good contrast for print */
+    body {
+        background: white;
+        color: black;
+    }
+}
+
+/* ========================================
+   CUSTOM FOCUS INDICATORS FOR COMPLEX WIDGETS
+   ======================================== */
+
+/* Org chart node focus */
+.org-chart-node:focus-visible {
+    outline: 3px solid var(--focus-ring-color);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 6px rgba(0, 133, 242, 0.15);
+}
+
+/* Role group focus */
+.role-group:focus-within {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(0, 133, 242, 0.1);
+}
+
+/* Sidebar focus trap */
+.node-editor-sidebar.active {
+    /* Focus should be trapped within sidebar when open */
+}

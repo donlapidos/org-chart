@@ -3,6 +3,21 @@
  * Handles chart editing, node management, and d3-org-chart integration
  */
 
+(function ensureGlobalToast() {
+    if (typeof window === 'undefined') return;
+    if (window.toast) return;
+
+    console.warn('[ChartEditor] Global toast not found. Installing fallback.');
+    window.toast = {
+        success: (msg) => alert(`Success: ${msg}`),
+        error: (msg) => alert(`Error: ${msg}`),
+        warning: (msg) => alert(`Warning: ${msg}`),
+        info: (msg) => alert(`Info: ${msg}`),
+        confirm: ({ message, title = 'Confirm' }) =>
+            Promise.resolve(window.confirm(`${title}\n\n${message}`))
+    };
+})();
+
 class ChartEditor {
     constructor() {
         this.chartId = null;
@@ -12,6 +27,12 @@ class ChartEditor {
         this.editingNodeId = null;
         this.autoSaveTimer = null;
         this.draftMembers = []; // Draft state for node editing (new or existing)
+
+        // Permission fields from API
+        this.isReadOnly = false;
+        this.userRole = null;
+        this.canEdit = true;
+        this.isOwner = false;
 
         this.init();
     }
@@ -111,50 +132,288 @@ class ChartEditor {
     /**
      * Initialize the editor
      */
-    init() {
+    async init() {
+        this.ensureToastSystem();
         // Get chart ID from URL
         const urlParams = new URLSearchParams(window.location.search);
         this.chartId = urlParams.get('id');
 
         if (!this.chartId) {
-            alert('No chart ID provided');
+            window.toast.error('No chart ID provided');
             window.location.href = 'index.html';
             return;
         }
 
-        // Load chart data
-        this.loadChart();
+        // Load chart data from API
+        await this.loadChart();
 
-        // Initialize auto-save
-        this.setupAutoSave();
+        // Initialize auto-save (only if editable)
+        if (!this.isReadOnly) {
+            this.setupAutoSave();
+        }
+    }
+
+    ensureToastSystem() {
+        if (typeof window.toast === 'undefined') {
+            console.warn('[ChartEditor] Toast system not found. Installing fallback.');
+            window.toast = {
+                success: (msg) => alert(`Success: ${msg}`),
+                error: (msg) => alert(`Error: ${msg}`),
+                warning: (msg) => alert(`Warning: ${msg}`),
+                info: (msg) => alert(`Info: ${msg}`),
+                confirm: ({ message, title = 'Confirm' }) => Promise.resolve(window.confirm(`${title}\n\n${message}`))
+            };
+        }
     }
 
     /**
-     * Load chart from storage
+     * Load chart from backend API
      */
-    loadChart() {
-        this.chartData = storage.getChart(this.chartId);
+    async loadChart() {
+        try {
+            // Show loading state
+            const saveStatus = document.getElementById('saveStatus');
+            if (saveStatus) {
+                saveStatus.textContent = 'Loading chart...';
+                saveStatus.className = 'save-status saving';
+            }
 
-        if (!this.chartData) {
-            alert('Chart not found');
-            window.location.href = 'index.html';
+            // Fetch chart from backend
+            const response = await window.apiClient.getChart(this.chartId);
+
+            if (!response || !response.chart) {
+                window.toast.error('Chart not found');
+                window.location.href = 'index.html';
+                return;
+            }
+
+            // Unpack the API response structure
+            const chartDoc = response.chart;
+            const data = chartDoc.data || {};
+
+            // Store chart metadata (id, ownerId, name) separately
+            this.chartMeta = {
+                id: chartDoc.id,
+                ownerId: chartDoc.ownerId,
+                name: chartDoc.name
+            };
+
+            // Store chart data (the actual chart content)
+            this.chartData = {
+                chartName: chartDoc.name || data.chartName || 'Untitled Chart',
+                description: data.description || '',
+                departmentTag: data.departmentTag || '',
+                coverId: data.coverId || null, // Stable cover ID for export matching
+                coverOrderIndex: data.coverOrderIndex ?? null, // Order within cover group
+                exportOrder: data.exportOrder ?? null, // Optional explicit export order (deprecated)
+                layout: data.layout || 'top',
+                nodes: Array.isArray(data.nodes) ? data.nodes : [],
+                connections: data.connections || [],
+                viewState: data.viewState || {}
+            };
+
+            // No auto-assignment: coverId must be explicitly set by user via settings modal
+            // This prevents mis-grouping on autosave
+
+            // Derive permission fields from userRole (defensive approach)
+            const role = (response.userRole || '').toLowerCase();
+            this.userRole = role || null;
+
+            // Determine ownership and editing capability from role
+            this.isOwner = role === 'owner';
+            this.canEdit = role === 'owner' || role === 'editor';
+            this.isReadOnly = role === 'viewer';
+
+            // If backend explicitly provides isReadOnly, use that as override
+            if (response.isReadOnly !== undefined) {
+                this.isReadOnly = response.isReadOnly === true;
+            }
+
+            // Log permission state for debugging
+            console.log('[ChartEditor] Permissions:', {
+                userRole: this.userRole,
+                isOwner: this.isOwner,
+                canEdit: this.canEdit,
+                isReadOnly: this.isReadOnly
+            });
+
+            // Guard: Check if nodes array is empty
+            if (this.chartData.nodes.length === 0) {
+                window.toast.warning('This chart has no nodes. Add a node to get started.');
+                // Continue loading - user can add nodes
+            }
+
+            // Ensure stored hierarchy is valid (auto-heal if needed)
+            if (this.chartData.nodes.length > 0) {
+                this.repairHierarchy({ persist: false }); // Don't persist immediately on load
+            }
+
+            // Update UI with chart name from metadata (authoritative source)
+            document.getElementById('chartTitle').textContent = this.chartMeta.name;
+            document.title = `${this.chartMeta.name} - Chart Editor`;
+
+            // Set layout
+            if (this.chartData.layout) {
+                document.getElementById('layoutSelect').value = this.chartData.layout;
+            }
+
+            // Update UI based on permissions
+            this.updateEditingUIState();
+
+            // Initialize org chart (only if we have nodes)
+            if (this.chartData.nodes.length > 0) {
+                this.initOrgChart();
+            } else {
+                // Show empty state message in chartCanvas
+                const chartContainer = document.getElementById('chartCanvas');
+                if (chartContainer) {
+                    chartContainer.innerHTML = `
+                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 400px; color: #666;">
+                            <svg style="width: 64px; height: 64px; margin-bottom: 16px; opacity: 0.3;" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                <line x1="9" y1="9" x2="15" y2="9"></line>
+                                <line x1="9" y1="15" x2="15" y2="15"></line>
+                            </svg>
+                            <h3 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600;">No nodes in this chart</h3>
+                            <p style="margin: 0; font-size: 14px;">Click "Add Node" to create the first node.</p>
+                        </div>
+                    `;
+                }
+            }
+
+            // Update save status
+            if (saveStatus) {
+                saveStatus.textContent = this.isReadOnly ? 'Read-only mode' : 'All changes saved';
+                saveStatus.className = this.isReadOnly ? 'save-status' : 'save-status saved';
+            }
+
+        } catch (error) {
+            console.error('Failed to load chart:', error);
+
+            // Handle specific error cases
+            if (error.message === 'Unauthorized') {
+                // Already redirected by apiClient
+                return;
+            }
+
+            if (error.message.includes('403') || error.message.includes('Forbidden')) {
+                window.toast.error('You don\'t have permission to access this chart');
+                setTimeout(() => window.location.href = 'index.html', 2000);
+                return;
+            }
+
+            if (error.message.includes('404') || error.message.includes('not found')) {
+                window.toast.error('Chart not found');
+                setTimeout(() => window.location.href = 'index.html', 2000);
+                return;
+            }
+
+            // Generic error
+            window.toast.error(`Failed to load chart: ${error.message}`);
+            setTimeout(() => window.location.href = 'index.html', 2000);
+        }
+    }
+
+    /**
+     * Update UI state based on editing permissions
+     */
+    updateEditingUIState() {
+        const readonly = this.isReadOnly || !this.canEdit;
+
+        // Disable/enable all editing controls
+        const controls = [
+            'addNodeBtn',
+            'saveBtn',
+            'settingsBtn'
+            // Note: shareBtn and deleteBtn not yet implemented in HTML
+        ];
+
+        controls.forEach(id => {
+            const element = document.getElementById(id);
+            if (element) {
+                if (readonly) {
+                    element.disabled = true;
+                    element.style.opacity = '0.5';
+                    element.style.cursor = 'not-allowed';
+                    element.title = 'You don\'t have permission to edit this chart';
+                } else {
+                    element.disabled = false;
+                    element.style.opacity = '';
+                    element.style.cursor = '';
+                    element.title = '';
+                }
+            }
+        });
+
+        // Disable layout select for viewers
+        const layoutSelect = document.getElementById('layoutSelect');
+        if (layoutSelect) {
+            layoutSelect.disabled = readonly;
+        }
+
+        // Show read-only banner if applicable
+        if (readonly) {
+            this.showReadOnlyBanner();
+        }
+
+        // Disable node clicking for editing if read-only
+        if (readonly) {
+            this.isReadOnlyMode = true;
+        }
+    }
+
+    /**
+     * Show read-only banner
+     */
+    showReadOnlyBanner() {
+        // Check if banner already exists
+        if (document.getElementById('readOnlyBanner')) {
             return;
         }
 
-        // Ensure stored hierarchy is valid (auto-heal if needed)
-        this.repairHierarchy({ persist: true });
+        const banner = document.createElement('div');
+        banner.id = 'readOnlyBanner';
+        banner.style.cssText = `
+            position: fixed;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #fff3cd;
+            color: #856404;
+            padding: 12px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            font-size: 14px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        `;
 
-        // Update UI
-        document.getElementById('chartTitle').textContent = this.chartData.chartName;
-        document.title = `${this.chartData.chartName} - Chart Editor`;
+        const icon = document.createElement('span');
+        icon.innerHTML = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+        `;
 
-        // Set layout
-        if (this.chartData.layout) {
-            document.getElementById('layoutSelect').value = this.chartData.layout;
-        }
+        const text = document.createElement('span');
+        text.textContent = this.userRole === 'VIEWER'
+            ? 'Viewing in read-only mode'
+            : 'You have read-only access to this chart';
 
-        // Initialize org chart
-        this.initOrgChart();
+        banner.appendChild(icon);
+        banner.appendChild(text);
+        document.body.appendChild(banner);
+
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+            banner.style.transition = 'opacity 0.3s';
+            banner.style.opacity = '0';
+            setTimeout(() => banner.remove(), 300);
+        }, 5000);
     }
 
     /**
@@ -162,6 +421,12 @@ class ChartEditor {
      */
     initOrgChart() {
         const self = this;
+
+        // Clear any empty state message before rendering
+        const chartCanvas = document.getElementById('chartCanvas');
+        if (chartCanvas) {
+            chartCanvas.innerHTML = '';
+        }
 
         // Transform data for d3-org-chart format
         const chartNodes = this.chartData.nodes.map(node => ({
@@ -191,7 +456,12 @@ class ChartEditor {
             .compact(false)
             .layout(this.chartData.layout || 'top')
             .onNodeClick((d) => {
-                self.editNode(d.data.id);
+                // Only allow editing if not in read-only mode
+                if (!self.isReadOnly && self.canEdit) {
+                    self.editNode(d.data.id);
+                } else {
+                    window.toast.info('This chart is read-only. You cannot make changes.');
+                }
             })
             .nodeContent((d) => OrgNodeRenderer.renderNodeContent(d))
             .render();
@@ -208,15 +478,23 @@ class ChartEditor {
     }
 
     /**
-     * Save chart to storage
+     * Save chart to backend API
      */
-    saveChart(showNotification = true) {
+    async saveChart(showNotification = true) {
         if (!this.chartData) return;
+
+        // Check if read-only
+        if (this.isReadOnly || !this.canEdit) {
+            window.toast.warning('Cannot save: You have read-only access to this chart');
+            return;
+        }
 
         // Update save status
         const saveStatus = document.getElementById('saveStatus');
-        saveStatus.textContent = 'Saving...';
-        saveStatus.className = 'save-status saving';
+        if (saveStatus) {
+            saveStatus.textContent = 'Saving...';
+            saveStatus.className = 'save-status saving';
+        }
 
         // Get current chart data from d3-org-chart
         if (this.orgChart) {
@@ -236,24 +514,56 @@ class ChartEditor {
             });
         }
 
-        // Save to storage
-        storage.updateChart(this.chartId, this.chartData);
+        try {
+            // Save to backend API
+            // Use chartMeta.name as authoritative source, fallback to chartData.chartName
+            const chartName = this.chartMeta?.name || this.chartData.chartName;
+            await window.apiClient.updateChart(
+                this.chartId,
+                chartName,
+                this.chartData
+            );
 
-        // Update save status
-        setTimeout(() => {
-            saveStatus.textContent = 'All changes saved';
-            saveStatus.className = 'save-status saved';
+            // Update save status
+            if (saveStatus) {
+                saveStatus.textContent = 'All changes saved';
+                saveStatus.className = 'save-status saved';
+            }
 
             if (showNotification) {
-                alert('Chart saved successfully!');
+                window.toast.success('Chart saved successfully!');
             }
-        }, 300);
+
+        } catch (error) {
+            console.error('Failed to save chart:', error);
+
+            // Update save status
+            if (saveStatus) {
+                saveStatus.textContent = 'Save failed';
+                saveStatus.className = 'save-status error';
+            }
+
+            // Handle specific errors
+            if (error.message.includes('403') || error.message.includes('Forbidden')) {
+                window.toast.error('You don\'t have permission to edit this chart');
+            } else if (error.message === 'Unauthorized') {
+                // Already redirected by apiClient
+            } else {
+                window.toast.error(`Failed to save chart: ${error.message}`);
+            }
+        }
     }
 
     /**
      * Show add node sidebar
      */
     addNode() {
+        // Prevent adding nodes in read-only mode
+        if (this.isReadOnly || !this.canEdit) {
+            window.toast.warning('Cannot add nodes: You have read-only access to this chart');
+            return;
+        }
+
         this.editingNodeId = null;
         document.getElementById('sidebarTitle').textContent = 'Add Node';
         document.getElementById('nodeAction').value = 'add';
@@ -278,10 +588,16 @@ class ChartEditor {
      * Edit existing node
      */
     editNode(nodeId) {
+        // Prevent editing nodes in read-only mode
+        if (this.isReadOnly || !this.canEdit) {
+            window.toast.warning('Cannot edit nodes: You have read-only access to this chart');
+            return;
+        }
+
         const node = this.chartData.nodes.find(n => n.id === nodeId);
 
         if (!node) {
-            alert('Node not found');
+            window.toast.error('Node not found');
             return;
         }
 
@@ -357,6 +673,12 @@ class ChartEditor {
     saveNode(event) {
         event.preventDefault();
 
+        // Prevent saving nodes in read-only mode
+        if (this.isReadOnly || !this.canEdit) {
+            window.toast.warning('Cannot save changes: You have read-only access to this chart');
+            return;
+        }
+
         const nodeId = this.editingNodeId || storage.generateNodeId();
         const action = document.getElementById('nodeAction').value;
         const parentSelect = document.getElementById('nodeParent');
@@ -365,19 +687,19 @@ class ChartEditor {
         const roots = (this.chartData?.nodes || []).filter(n => n.id !== nodeId && !n.parentId);
 
         if (!parentId && roots.length > 0) {
-            alert('Only one top-level node is allowed. Please choose a manager under "Reports To".');
+            window.toast.warning('Only one top-level node is allowed. Please choose a manager under "Reports To".');
             return;
         }
 
         if (parentId === nodeId) {
-            alert('A node cannot report to itself.');
+            window.toast.warning('A node cannot report to itself.');
             return;
         }
 
         if (parentId && this.editingNodeId) {
             const descendants = this.getDescendantIds(nodeId);
             if (descendants.has(parentId)) {
-                alert('You selected a descendant as the manager, which would create a cycle.');
+                window.toast.warning('You selected a descendant as the manager, which would create a cycle.');
                 return;
             }
         }
@@ -386,7 +708,7 @@ class ChartEditor {
         const members = this.collectRoleBuilderData();
 
         if (members.length === 0) {
-            alert('Please add at least one person to this node');
+            window.toast.warning('Please add at least one person to this node');
             return;
         }
 
@@ -418,8 +740,13 @@ class ChartEditor {
 
         this.repairHierarchy({ persist: false });
 
-        // Re-render the chart
-        this.orgChart.data(this.chartData.nodes).render();
+        // Initialize orgChart if this is the first node
+        if (!this.orgChart) {
+            this.initOrgChart();
+        } else {
+            // Re-render the chart
+            this.orgChart.data(this.chartData.nodes).render();
+        }
 
         this.saveChart(false);
         this.closeSidebar();
@@ -428,8 +755,14 @@ class ChartEditor {
     /**
      * Delete node
      */
-    deleteNode() {
+    async deleteNode() {
         if (!this.editingNodeId) return;
+
+        // Prevent deleting nodes in read-only mode
+        if (this.isReadOnly || !this.canEdit) {
+            window.toast.warning('Cannot delete nodes: You have read-only access to this chart');
+            return;
+        }
 
         const node = this.chartData.nodes.find(n => n.id === this.editingNodeId);
         if (!node) return;
@@ -443,7 +776,14 @@ class ChartEditor {
             confirmMessage = `"${nodeName}" has subordinates. Deleting this node will also delete all subordinates. Continue?`;
         }
 
-        if (!confirm(confirmMessage)) {
+        const confirmed = await window.toast.confirm({
+            message: confirmMessage,
+            title: 'Delete Node',
+            confirmText: 'Delete',
+            cancelText: 'Cancel'
+        });
+
+        if (!confirmed) {
             return;
         }
 
@@ -458,6 +798,7 @@ class ChartEditor {
 
         this.saveChart(false);
         this.closeSidebar();
+        window.toast.success('Node deleted successfully');
     }
 
     /**
@@ -480,14 +821,52 @@ class ChartEditor {
      * Show sidebar
      */
     showSidebar() {
-        document.getElementById('nodeSidebar').classList.add('active');
+        const sidebar = document.getElementById('nodeSidebar');
+        sidebar.classList.add('active');
+
+        // Apply department styling to sidebar if chart has a department tag
+        if (this.chartData && this.chartData.departmentTag) {
+            const deptLower = this.chartData.departmentTag.toLowerCase();
+            let deptCategory = 'default';
+
+            if (['engineering', 'product', 'tech', 'development'].some(k => deptLower.includes(k))) {
+                deptCategory = 'engineering';
+            } else if (['sales', 'revenue', 'business'].some(k => deptLower.includes(k))) {
+                deptCategory = 'sales';
+            } else if (['marketing', 'brand'].some(k => deptLower.includes(k))) {
+                deptCategory = 'marketing';
+            } else if (['operations', 'ops'].some(k => deptLower.includes(k))) {
+                deptCategory = 'operations';
+            } else if (['finance', 'accounting'].some(k => deptLower.includes(k))) {
+                deptCategory = 'finance';
+            } else if (['hr', 'people', 'human'].some(k => deptLower.includes(k))) {
+                deptCategory = 'hr';
+            } else if (['it', 'information', 'technology', 'digital'].some(k => deptLower.includes(k))) {
+                deptCategory = 'it';
+            } else if (['legal', 'compliance', 'law'].some(k => deptLower.includes(k))) {
+                deptCategory = 'legal';
+            } else if (['admin', 'administration', 'executive'].some(k => deptLower.includes(k))) {
+                deptCategory = 'admin';
+            }
+
+            sidebar.setAttribute('data-department', deptCategory);
+        } else {
+            sidebar.setAttribute('data-department', 'default');
+        }
     }
 
     /**
      * Close sidebar
      */
     closeSidebar() {
-        document.getElementById('nodeSidebar').classList.remove('active');
+        const sidebar = document.getElementById('nodeSidebar');
+
+        // Release accessibility focus trap and remove inert from background
+        if (window.accessibilityManager) {
+            window.accessibilityManager.releaseFocusTrap(sidebar);
+        }
+
+        sidebar.classList.remove('active');
         this.editingNodeId = null;
         this.draftMembers = []; // Clear draft state on cancel
     }
@@ -531,6 +910,12 @@ class ChartEditor {
      * Change layout
      */
     changeLayout(layout) {
+        // Prevent layout changes in read-only mode
+        if (this.isReadOnly || !this.canEdit) {
+            window.toast.warning('Cannot change layout: You have read-only access to this chart');
+            return;
+        }
+
         this.chartData.layout = layout;
         this.orgChart.layout(layout).render().fit();
         this.saveChart(false);
@@ -628,18 +1013,71 @@ class ChartEditor {
     /**
      * Show chart settings modal
      */
-    showChartSettings() {
+    async showChartSettings() {
         document.getElementById('settingsChartName').value = this.chartData.chartName;
         document.getElementById('settingsDepartment').value = this.chartData.departmentTag || '';
-        document.getElementById('settingsDescription').value = this.chartData.description || '';
-        document.getElementById('settingsModal').classList.add('active');
+        document.getElementById('settingsCoverOrderIndex').value = this.chartData.coverOrderIndex ?? '';
+
+        // Populate cover selector
+        await this.populateCoverSelector();
+
+        const modal = document.getElementById('settingsModal');
+        modal.style.display = 'flex';
+        modal.classList.add('active');
+    }
+
+    /**
+     * Load cover options from mapping file and populate selector
+     */
+    async populateCoverSelector() {
+        const selector = document.getElementById('settingsCoverId');
+        if (!selector) return;
+
+        try {
+            // Load cover image mapping
+            const response = await fetch('assets/export/cover-image-mapping.json');
+            const mapping = await response.json();
+
+            // Clear existing options except default
+            selector.innerHTML = '<option value="">Default (Generic Org Chart)</option>';
+
+            // Add options from coverImages
+            if (mapping.coverImages && Array.isArray(mapping.coverImages)) {
+                mapping.coverImages.forEach(cover => {
+                    const option = document.createElement('option');
+                    option.value = cover.id;
+
+                    // Create a friendly display name from the ID
+                    const displayName = cover.label || cover.id
+                        .split('-')
+                        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                        .join(' ');
+
+                    option.textContent = displayName;
+                    selector.appendChild(option);
+                });
+            }
+
+            // Set current value
+            selector.value = this.chartData.coverId || '';
+        } catch (error) {
+            console.error('[ChartEditor] Failed to load cover options:', error);
+        }
     }
 
     /**
      * Close settings modal
      */
     closeSettingsModal() {
-        document.getElementById('settingsModal').classList.remove('active');
+        const modal = document.getElementById('settingsModal');
+
+        // Release accessibility focus trap and remove inert from background
+        if (window.accessibilityManager) {
+            window.accessibilityManager.releaseFocusTrap(modal);
+        }
+
+        modal.classList.remove('active');
+        modal.style.display = 'none';
     }
 
     /**
@@ -648,9 +1086,31 @@ class ChartEditor {
     saveSettings(event) {
         event.preventDefault();
 
+        // Prevent changing settings in read-only mode
+        if (this.isReadOnly || !this.canEdit) {
+            window.toast.warning('Cannot modify settings: You have read-only access to this chart');
+            return;
+        }
+
         this.chartData.chartName = document.getElementById('settingsChartName').value.trim();
         this.chartData.departmentTag = document.getElementById('settingsDepartment').value.trim();
-        this.chartData.description = document.getElementById('settingsDescription').value.trim();
+
+        // Save selected coverId (explicit user choice, stable regardless of department)
+        const selectedCoverId = document.getElementById('settingsCoverId')?.value || '';
+        this.chartData.coverId = selectedCoverId || null;
+
+        // Save coverOrderIndex (order within cover group)
+        const coverOrderIndexValue = document.getElementById('settingsCoverOrderIndex')?.value;
+        const parsedValue = coverOrderIndexValue && !isNaN(parseInt(coverOrderIndexValue))
+            ? parseInt(coverOrderIndexValue)
+            : null;
+        // Enforce >= 1, ignore 0/negative values (they would sort incorrectly)
+        this.chartData.coverOrderIndex = (parsedValue && parsedValue >= 1) ? parsedValue : null;
+
+        // Sync chartMeta to prevent stale name in saveChart
+        if (this.chartMeta) {
+            this.chartMeta.name = this.chartData.chartName;
+        }
 
         document.getElementById('chartTitle').textContent = this.chartData.chartName;
         document.title = `${this.chartData.chartName} - Chart Editor`;
@@ -687,8 +1147,14 @@ class ChartEditor {
             // Create delete role button
             const deleteRoleBtn = document.createElement('button');
             deleteRoleBtn.type = 'button';
-            deleteRoleBtn.className = 'btn btn-danger btn-sm';
-            deleteRoleBtn.textContent = '✖';
+            deleteRoleBtn.className = 'btn btn-ghost-danger btn-sm';
+            deleteRoleBtn.innerHTML = `
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            `;
+            deleteRoleBtn.title = 'Remove role';
             deleteRoleBtn.onclick = () => this.removeRole(roleIndex);
 
             roleHeader.appendChild(roleLabelInput);
@@ -704,9 +1170,19 @@ class ChartEditor {
             roleGroup.entries.forEach((person, personIndex) => {
                 const personDiv = document.createElement('div');
                 personDiv.className = 'person-entry';
-                personDiv.style.cssText = 'display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 4px; margin-bottom: 0.5rem;';
 
-                // Name input
+                // Create horizontal container for avatar + name + delete button
+                const inputRow = document.createElement('div');
+                inputRow.className = 'person-entry-row';
+
+                // Avatar with initials
+                const avatar = document.createElement('div');
+                avatar.className = 'avatar sm';
+                const initials = this.getInitials(person.name || '');
+                avatar.textContent = initials;
+                avatar.title = person.name || 'Unnamed';
+
+                // Name input (fills available space)
                 const nameInput = document.createElement('input');
                 nameInput.type = 'text';
                 nameInput.className = 'form-input';
@@ -717,7 +1193,14 @@ class ChartEditor {
                 nameInput.dataset.personIndex = personIndex;
                 nameInput.dataset.field = 'name';
 
-                // Hidden field to preserve photoUrl
+                // Update avatar when name changes
+                nameInput.addEventListener('input', (e) => {
+                    const newInitials = this.getInitials(e.target.value);
+                    avatar.textContent = newInitials;
+                    avatar.title = e.target.value;
+                });
+
+                // Hidden field to preserve photoUrl (must stay in DOM)
                 const photoUrlInput = document.createElement('input');
                 photoUrlInput.type = 'hidden';
                 photoUrlInput.value = person.photoUrl || '';
@@ -725,17 +1208,25 @@ class ChartEditor {
                 photoUrlInput.dataset.personIndex = personIndex;
                 photoUrlInput.dataset.field = 'photoUrl';
 
-                // Delete button
+                // Compact delete button (icon only) with SVG
                 const deletePersonBtn = document.createElement('button');
                 deletePersonBtn.type = 'button';
-                deletePersonBtn.className = 'btn btn-danger btn-sm';
-                deletePersonBtn.textContent = '✖ Remove Person';
-                deletePersonBtn.style.cssText = 'align-self: flex-end;';
+                deletePersonBtn.className = 'btn btn-ghost-danger btn-sm';
+                deletePersonBtn.innerHTML = `
+                    <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                `;
+                deletePersonBtn.title = 'Remove person';  // Tooltip for accessibility
                 deletePersonBtn.onclick = () => this.removePerson(roleIndex, personIndex);
 
-                personDiv.appendChild(nameInput);
-                personDiv.appendChild(photoUrlInput);
-                personDiv.appendChild(deletePersonBtn);
+                inputRow.appendChild(avatar);
+                inputRow.appendChild(nameInput);
+                inputRow.appendChild(deletePersonBtn);
+
+                personDiv.appendChild(inputRow);
+                personDiv.appendChild(photoUrlInput);  // Hidden field outside the flex row
 
                 peopleContainer.appendChild(personDiv);
             });
@@ -745,8 +1236,16 @@ class ChartEditor {
             // Create "Add Person" button
             const addPersonBtn = document.createElement('button');
             addPersonBtn.type = 'button';
-            addPersonBtn.className = 'btn btn-secondary btn-sm';
-            addPersonBtn.textContent = '+ Add Person';
+            addPersonBtn.className = 'btn btn-neutral btn-sm';
+            addPersonBtn.innerHTML = `
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="8.5" cy="7" r="4"></circle>
+                    <line x1="20" y1="8" x2="20" y2="14"></line>
+                    <line x1="23" y1="11" x2="17" y2="11"></line>
+                </svg>
+                Add Person
+            `;
             addPersonBtn.onclick = () => this.addPersonToRole(roleIndex);
 
             roleDiv.appendChild(addPersonBtn);
@@ -811,10 +1310,17 @@ class ChartEditor {
 
         this.captureDraftMembersFromUI();
 
-        if (confirm('Remove this entire role and all people in it?')) {
-            this.draftMembers.splice(roleIndex, 1);
-            this.renderRoleBuilder(this.draftMembers);
-        }
+        window.toast.confirm({
+            message: 'Remove this entire role and all people in it?',
+            title: 'Remove Role',
+            confirmText: 'Remove',
+            cancelText: 'Cancel'
+        }).then((confirmed) => {
+            if (confirmed) {
+                this.draftMembers.splice(roleIndex, 1);
+                this.renderRoleBuilder(this.draftMembers);
+            }
+        });
     }
 
     /**
@@ -845,6 +1351,18 @@ class ChartEditor {
         }
 
         this.renderRoleBuilder(this.draftMembers);
+    }
+
+    /**
+     * Get initials from a name (e.g., "John Doe" -> "JD")
+     */
+    getInitials(name) {
+        if (!name || !name.trim()) return '?';
+        const parts = name.trim().split(/\s+/);
+        if (parts.length === 1) {
+            return parts[0].charAt(0).toUpperCase();
+        }
+        return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
     }
 
     /**

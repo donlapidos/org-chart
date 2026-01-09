@@ -201,6 +201,9 @@ class BulkExportManager {
                         nodeCount: chart.nodes?.length || 0,
                         peopleCount: this.countPeople(chart.nodes),
                         lastModified: chart.lastModified,
+                        coverId: chart.coverId || null,
+                        coverOrderIndex: chart.coverOrderIndex ?? null,
+                        createdAt: chart.createdAt || chart.lastModified,
                         chartData: chart,
                         snapshot
                     });
@@ -255,12 +258,134 @@ class BulkExportManager {
      * @returns {Promise<Array>} Array of chart objects
      */
     async fetchAllCharts() {
-        // For localStorage (current implementation)
+        // Priority 1: API client (Cosmos DB via Azure Functions)
+        if (window.apiClient && typeof window.apiClient.getCharts === 'function') {
+            let allChartMetadata = null;
+
+            // Try to fetch from API
+            try {
+                // Pagination loop: fetch all pages of charts
+                allChartMetadata = [];
+                let offset = 0;
+                let hasMore = true;
+                const limit = 100; // Max allowed by API
+
+                while (hasMore) {
+                    const response = await window.apiClient.getCharts({ limit, offset, includeData: true });
+                    const chartList = Array.isArray(response) ? response : (response?.charts || []);
+
+                    allChartMetadata = allChartMetadata.concat(chartList);
+
+                    // Check pagination info
+                    if (response.pagination) {
+                        hasMore = response.pagination.hasMore;
+                        offset += limit;
+                        console.log(`[BulkExport] Fetched ${chartList.length} charts (${allChartMetadata.length} total, hasMore: ${hasMore})`);
+                    } else {
+                        // No pagination info - assume single page
+                        hasMore = false;
+                    }
+                }
+
+                console.log(`[BulkExport] API returned ${allChartMetadata.length} total charts`);
+            } catch (error) {
+                console.error('[BulkExport] API call failed:', error);
+                allChartMetadata = null;  // Signal API failure
+            }
+
+            // If API succeeded, process the data (do NOT fall back to localStorage)
+            if (allChartMetadata !== null) {
+                console.log('[BulkExport] Using API charts only (not using localStorage)');
+
+                // Filter to only charts owned by the current user
+                const currentUserId = window.apiClient?.currentUser?.userId || window.currentUser?.userId;
+                const ownedCharts = allChartMetadata.filter(chartMeta => {
+                    // Check userRole if available (preferred method)
+                    if (chartMeta.userRole) {
+                        return chartMeta.userRole === 'owner';
+                    }
+                    // Fallback: check ownerId directly
+                    if (chartMeta.ownerId && currentUserId) {
+                        return chartMeta.ownerId === currentUserId;
+                    }
+                    // If we can't determine ownership, exclude the chart to be safe
+                    console.warn(`[BulkExport] Cannot determine ownership for chart ${chartMeta.id}, excluding from export`);
+                    return false;
+                });
+
+                console.log(`[BulkExport] Charts owned by current user: ${ownedCharts.length}`);
+
+                // NOTE: If includeData is not supported by the backend, chartMeta.data will be missing.
+                // Fall back to per-chart fetches in that case.
+                const chartsWithData = new Array(ownedCharts.length);
+                const chartsNeedingFetch = [];
+
+                ownedCharts.forEach((chartMeta, index) => {
+                    const chartData = chartMeta.data;
+
+                    if (chartData && typeof chartData === 'object') {
+                        chartsWithData[index] = {
+                            chartId: chartMeta.id,
+                            chartName: chartMeta.name || chartData.chartName || 'Untitled',
+                            departmentTag: chartData.departmentTag || '',
+                            description: chartData.description || '',
+                            coverId: chartData.coverId || null,
+                            coverOrderIndex: chartData.coverOrderIndex ?? null,
+                            exportOrder: chartData.exportOrder ?? null,
+                            nodes: chartData.nodes || [],
+                            layout: chartData.layout || 'top',
+                            viewState: chartData.viewState || {},
+                            lastModified: chartMeta.lastModified || chartData.lastModified,
+                            createdAt: chartMeta.createdAt || chartData.createdAt || chartMeta.lastModified
+                        };
+                    } else {
+                        chartsNeedingFetch.push({ chartMeta, index });
+                    }
+                });
+
+                if (chartsNeedingFetch.length > 0) {
+                    console.warn(`[BulkExport] includeData unavailable for ${chartsNeedingFetch.length} charts; falling back to per-chart fetch.`);
+                }
+
+                for (const { chartMeta, index } of chartsNeedingFetch) {
+                    try {
+                        const fullResponse = await window.apiClient.getChart(chartMeta.id);
+                        const fullChart = fullResponse.chart || fullResponse;
+                        const chartData = fullChart.data || {};
+
+                        chartsWithData[index] = {
+                            chartId: chartMeta.id,
+                            chartName: chartMeta.name || chartData.chartName || 'Untitled',
+                            departmentTag: chartData.departmentTag || '',
+                            description: chartData.description || '',
+                            coverId: chartData.coverId || null,
+                            coverOrderIndex: chartData.coverOrderIndex ?? null,
+                            exportOrder: chartData.exportOrder ?? null,
+                            nodes: chartData.nodes || [],
+                            layout: chartData.layout || 'top',
+                            viewState: chartData.viewState || {},
+                            lastModified: chartMeta.lastModified || fullChart.lastModified,
+                            createdAt: chartMeta.createdAt || chartData.createdAt || chartMeta.lastModified
+                        };
+                    } catch (error) {
+                        console.warn(`[BulkExport] Failed to fetch chart ${chartMeta.id}:`, error);
+                        // Skip this chart but continue with others
+                    }
+                }
+
+                const apiCharts = chartsWithData.filter(Boolean);
+                console.log(`[BulkExport] Returning ${apiCharts.length} API charts`);
+                return apiCharts;
+            }
+        }
+
+        // Priority 2: localStorage (legacy/fallback - only used if API unavailable or failed)
+        console.log('[BulkExport] Falling back to localStorage');
         if (typeof this.storage.getChartsArray === 'function') {
             return this.storage.getChartsArray();
         }
 
-        // For Firestore (future implementation with authentication)
+        // Priority 3: Firestore (future implementation with authentication)
         if (typeof this.storage.getAllCharts === 'function') {
             try {
                 // Check if user is authenticated (Firebase)
@@ -310,16 +435,313 @@ class BulkExportManager {
     }
 
     /**
+     * Measure the actual content bounding box of an SVG by inspecting node positions
+     * Returns the tight bounds of all .node elements, removing excess whitespace
+     */
+    measureSvgContentBounds(svgElement) {
+        if (!svgElement) {
+            return null;
+        }
+
+        try {
+            // Find all node elements in the SVG
+            const nodeElements = svgElement.querySelectorAll('.node, .node-group, [class*="node"]');
+
+            if (nodeElements.length === 0) {
+                // Fallback: use SVG dimensions if no nodes found
+                const svgRect = svgElement.getBoundingClientRect();
+                return {
+                    x: 0,
+                    y: 0,
+                    width: svgRect.width || parseInt(svgElement.getAttribute('width')) || 2000,
+                    height: svgRect.height || parseInt(svgElement.getAttribute('height')) || 1128,
+                    originalWidth: svgRect.width || parseInt(svgElement.getAttribute('width')) || 2000,
+                    originalHeight: svgRect.height || parseInt(svgElement.getAttribute('height')) || 1128,
+                    margin: 50
+                };
+            }
+
+            // Calculate bounding box by examining all node transforms
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+            nodeElements.forEach(node => {
+                const bbox = node.getBBox();
+                const transform = node.getAttribute('transform');
+
+                // Parse translate values from transform
+                let tx = 0, ty = 0;
+                if (transform) {
+                    const translateMatch = transform.match(/translate\s*\(\s*([^,\s]+)[\s,]+([^)]+)\)/);
+                    if (translateMatch) {
+                        tx = parseFloat(translateMatch[1]) || 0;
+                        ty = parseFloat(translateMatch[2]) || 0;
+                    }
+                }
+
+                const left = tx + bbox.x;
+                const right = left + bbox.width;
+                const top = ty + bbox.y;
+                const bottom = top + bbox.height;
+
+                minX = Math.min(minX, left);
+                minY = Math.min(minY, top);
+                maxX = Math.max(maxX, right);
+                maxY = Math.max(maxY, bottom);
+            });
+
+            // Add configurable padding around content
+            const padding = 50; // pixels
+            minX -= padding;
+            minY -= padding;
+            maxX += padding;
+            maxY += padding;
+
+            const contentWidth = maxX - minX;
+            const contentHeight = maxY - minY;
+
+            const svgRect = svgElement.getBoundingClientRect();
+            const originalWidth = svgRect.width || parseInt(svgElement.getAttribute('width')) || 2000;
+            const originalHeight = svgRect.height || parseInt(svgElement.getAttribute('height')) || 1128;
+
+            return {
+                x: minX,
+                y: minY,
+                width: contentWidth,
+                height: contentHeight,
+                originalWidth,
+                originalHeight,
+                margin: padding
+            };
+        } catch (error) {
+            console.warn('[Export] Failed to measure SVG bounds:', error);
+            // Return safe defaults
+            return {
+                x: 0,
+                y: 0,
+                width: 2000,
+                height: 1128,
+                originalWidth: 2000,
+                originalHeight: 1128,
+                margin: 50
+            };
+        }
+    }
+
+    /**
+     * Compute optimal scale to fill target area while maintaining aspect ratio
+     * Aims for 90% fill to leave some margin for aesthetics
+     * Ensures no negative offsets (which cause cropping)
+     */
+    computeOptimalScale(contentBounds, targetWidth, targetHeight, fillPercentage = 0.9) {
+        if (!contentBounds || contentBounds.width <= 0 || contentBounds.height <= 0) {
+            return { scale: 1, offsetX: 0, offsetY: 0, finalWidth: targetWidth, finalHeight: targetHeight };
+        }
+
+        const targetFillWidth = targetWidth * fillPercentage;
+        const targetFillHeight = targetHeight * fillPercentage;
+
+        // Calculate scale to fit within target dimensions
+        const scaleX = targetFillWidth / contentBounds.width;
+        const scaleY = targetFillHeight / contentBounds.height;
+
+        // Use the smaller scale to ensure content fits (never crops)
+        let scale = Math.min(scaleX, scaleY);
+
+        // Calculate scaled dimensions
+        let scaledWidth = contentBounds.width * scale;
+        let scaledHeight = contentBounds.height * scale;
+
+        // If scaled dimensions exceed target, reduce scale further
+        if (scaledWidth > targetWidth || scaledHeight > targetHeight) {
+            const adjustedScaleX = targetWidth / contentBounds.width;
+            const adjustedScaleY = targetHeight / contentBounds.height;
+            scale = Math.min(adjustedScaleX, adjustedScaleY) * 0.95; // 95% to ensure margin
+            scaledWidth = contentBounds.width * scale;
+            scaledHeight = contentBounds.height * scale;
+        }
+
+        // Calculate centered position (guaranteed non-negative)
+        const offsetX = Math.max(0, (targetWidth - scaledWidth) / 2);
+        const offsetY = Math.max(0, (targetHeight - scaledHeight) / 2);
+
+        return {
+            scale,
+            offsetX,
+            offsetY,
+            finalWidth: scaledWidth,
+            finalHeight: scaledHeight
+        };
+    }
+
+    /**
+     * Analyze chart structure to determine optimal layout parameters
+     * Returns { depth, maxBreadth, totalNodes, layoutParams }
+     */
+    analyzeChartStructure(nodes) {
+        if (!nodes || nodes.length === 0) {
+            return {
+                depth: 1,
+                maxBreadth: 1,
+                totalNodes: 0,
+                layoutParams: {
+                    nodeWidth: 250,
+                    childrenMargin: 80,
+                    compactMarginBetween: 25,
+                    compactMarginPair: 100
+                }
+            };
+        }
+
+        // Build parent-child relationships and level assignments
+        const nodeMap = new Map();
+        const levelCounts = new Map();  // Track nodes per level
+        const nodeLevels = new Map();   // Track which level each node is at
+
+        nodes.forEach(node => {
+            // Support both id/parentId and nodeId/parentNodeId
+            const nodeId = node.id ?? node.nodeId;
+            nodeMap.set(nodeId, node);
+        });
+
+        // Assign levels via BFS to count nodes per level accurately
+        const queue = [];
+        const visited = new Set();
+
+        // Start from root nodes (nodes with no parent or invalid parent)
+        const rootNodes = nodes.filter(n => {
+            const parentId = n.parentId ?? n.parentNodeId;
+            return !parentId || !nodeMap.has(parentId);
+        });
+        rootNodes.forEach(root => {
+            const rootId = root.id ?? root.nodeId;
+            queue.push({ nodeId: rootId, level: 0 });
+            visited.add(rootId);
+        });
+
+        let maxDepth = 0;
+
+        while (queue.length > 0) {
+            const { nodeId, level } = queue.shift();
+            nodeLevels.set(nodeId, level);
+            maxDepth = Math.max(maxDepth, level);
+
+            // Increment count for this level
+            levelCounts.set(level, (levelCounts.get(level) || 0) + 1);
+
+            // Find children and add to queue
+            const children = nodes.filter(n => {
+                const nId = n.id ?? n.nodeId;
+                const nParentId = n.parentId ?? n.parentNodeId;
+                return nParentId === nodeId && !visited.has(nId);
+            });
+            children.forEach(child => {
+                const childId = child.id ?? child.nodeId;
+                queue.push({ nodeId: childId, level: level + 1 });
+                visited.add(childId);
+            });
+        }
+
+        const depth = maxDepth + 1;  // Number of levels (0-indexed, so +1)
+        const maxBreadth = Math.max(...Array.from(levelCounts.values()), 1);  // Max nodes at any level
+        const totalNodes = nodes.length;
+
+        // Adaptive layout parameters based on tree characteristics
+        // Start with generous base values to prevent overlaps
+        let nodeWidth = 250;
+        let childrenMargin = 100;   // Vertical spacing between parent and children (increased from 80)
+        let compactMarginBetween = 40;  // Horizontal spacing between siblings (increased from 25)
+        let compactMarginPair = 120;    // Spacing between sibling groups (increased from 100)
+
+        // Adjust based on breadth (max nodes at any level)
+        if (maxBreadth > 10) {
+            // Very wide tree: smaller nodes, more spacing
+            nodeWidth = 200;
+            compactMarginBetween = 50;   // Critical: extra spacing for wide levels
+            compactMarginPair = 140;
+            childrenMargin = 110;
+        } else if (maxBreadth > 7) {
+            // Wide tree: moderate reduction, increased spacing
+            nodeWidth = 220;
+            compactMarginBetween = 45;
+            compactMarginPair = 130;
+            childrenMargin = 105;
+        } else if (maxBreadth > 4) {
+            // Medium tree: slight adjustments
+            nodeWidth = 235;
+            compactMarginBetween = 42;
+            compactMarginPair = 125;
+        }
+
+        // Adjust based on depth (number of levels)
+        if (depth > 6) {
+            // Very deep tree: increase vertical spacing significantly
+            childrenMargin = 120;
+        } else if (depth > 4) {
+            childrenMargin = 110;
+        }
+
+        // For dense trees, add extra padding everywhere
+        const density = totalNodes / (depth * maxBreadth || 1);
+        if (density > 1.5) {
+            childrenMargin += 20;
+            compactMarginBetween += 15;
+            compactMarginPair += 20;
+        }
+
+        return {
+            depth,
+            maxBreadth,
+            totalNodes,
+            layoutParams: {
+                nodeWidth,
+                childrenMargin,
+                compactMarginBetween,
+                compactMarginPair
+            }
+        };
+    }
+
+    /**
      * Render a single chart off-screen and capture as image
      */
     async renderChartOffScreen(chartData) {
         const renderer = this.getNodeRenderer();
         const config = await this.getTemplateConfig();
-        const captureWidth = config.images?.captureWidthPx || 2000;
-        const captureHeight = config.images?.captureHeightPx || 1128;
         const viewState = chartData.viewState || {};
         const chartNodes = this.prepareChartNodes(chartData);
-        const respectViewport = this.shouldRespectViewport(viewState);
+
+        // Analyze chart structure for adaptive spacing
+        const analysis = this.analyzeChartStructure(chartData.nodes || []);
+        console.log(`[Export] Chart "${chartData.name}": ${analysis.totalNodes} nodes, depth=${analysis.depth}, breadth=${analysis.maxBreadth}`);
+        console.log(`[Export] Adaptive layout: nodeWidth=${analysis.layoutParams.nodeWidth}, childrenMargin=${analysis.layoutParams.childrenMargin}, compactMarginBetween=${analysis.layoutParams.compactMarginBetween}`);
+
+        // Dynamic canvas sizing: larger canvas for complex charts prevents fit() from over-compressing
+        const baseCaptureWidth = config.images?.captureWidthPx || 2000;
+        const baseCaptureHeight = config.images?.captureHeightPx || 1128;
+
+        // Estimate minimum required dimensions based on tree structure
+        const params = analysis.layoutParams;
+
+        // Width: maxBreadth nodes × (nodeWidth + spacing) + padding for connectors
+        const estimatedWidth = analysis.maxBreadth * (params.nodeWidth + params.compactMarginBetween) + 400;
+
+        // Height: depth levels × (avg node height + childrenMargin) + padding
+        const avgNodeHeight = 120;  // Estimate based on multi-person nodes
+        const estimatedHeight = analysis.depth * (avgNodeHeight + params.childrenMargin) + 300;
+
+        // Use larger of base or estimated size (with max limits to prevent memory issues)
+        const captureWidth = Math.min(Math.max(baseCaptureWidth, estimatedWidth), 4500);
+        const captureHeight = Math.min(Math.max(baseCaptureHeight, estimatedHeight), 3500);
+
+        if (captureWidth > baseCaptureWidth || captureHeight > baseCaptureHeight) {
+            console.log(`[Export] ⚠️ Canvas enlarged: ${captureWidth}×${captureHeight}px (base: ${baseCaptureWidth}×${baseCaptureHeight}px) to prevent compression`);
+        } else {
+            console.log(`[Export] Canvas size: ${captureWidth}×${captureHeight}px (sufficient for tree)`);
+        }
+
+        // For export: preserve collapsed/expanded state but ignore zoom/pan
+        // This ensures consistent framing across all charts
+        const shouldApplyCollapsedState = this.hasCollapsedNodes(viewState);
 
         // Fetch and prepare styles with resolved CSS variables
         const stylesheetCSS = await this.fetchStylesheet();
@@ -349,15 +771,18 @@ class BulkExportManager {
             container.appendChild(canvasDiv);
 
             try {
-                // Create temporary org chart instance
+                // Create temporary org chart instance with adaptive spacing and dynamic sizing
+                const params = analysis.layoutParams;
                 const tempChart = new d3.OrgChart()
                     .container('#temp-chart-canvas')
                     .data(chartNodes)
-                    .nodeWidth(() => 250)
+                    .svgWidth(captureWidth)    // Use dynamic canvas width
+                    .svgHeight(captureHeight)  // Use dynamic canvas height
+                    .nodeWidth(() => params.nodeWidth)
                     .nodeHeight((d) => renderer.calculateNodeHeight(d.data || d))
-                    .childrenMargin(() => 80)
-                    .compactMarginBetween(() => 25)
-                    .compactMarginPair(() => 100)
+                    .childrenMargin(() => params.childrenMargin)
+                    .compactMarginBetween(() => params.compactMarginBetween)
+                    .compactMarginPair(() => params.compactMarginPair)
                     .compact(false)
                     .layout(chartData.layout || 'top')
                     .nodeContent((d) => renderer.renderNodeContent(d))
@@ -367,17 +792,55 @@ class BulkExportManager {
                 const maxWait = this.calculateRenderTimeout(chartData);
                 this.waitForChartRender(canvasDiv, maxWait)
                     .then(() => {
-                        if (respectViewport) {
-                            this.applyViewStateTransform(tempChart, viewState);
+                        // For export: skip collapsed state to always show full org tree
+                        // Users can manually collapse in editor, but exports should be comprehensive
+                        // TODO: Add user preference toggle for "Respect current view" vs "Full tree"
+
+                        // Explicitly call fit() to ensure all nodes are visible and properly framed
+                        // Because we sized the canvas based on tree complexity, fit() won't need to
+                        // compress the spacing - it will just center/position the content
+                        if (typeof tempChart.fit === 'function') {
+                            tempChart.fit();
+                            console.log(`[Export] Called fit() to center content (canvas is sized for tree complexity)`);
                         }
 
-                        const svgNode = canvasDiv.querySelector('svg');
-                        this.injectNodeStyles(svgNode, resolvedCSS);
+                        // Wait a moment for fit() to complete
+                        setTimeout(() => {
+                            const svgNode = canvasDiv.querySelector('svg');
+                            this.injectNodeStyles(svgNode, resolvedCSS);
 
-                        tempChart.exportImg({
-                            full: !respectViewport,
-                            save: false,
-                            scale: this.exportQuality.scale,
+                            // Measure SVG content bounds AFTER fit() for accurate dimensions
+                            const contentBounds = this.measureSvgContentBounds(svgNode);
+
+                            // Define page insets (margins for legibility while maximizing chart area)
+                            // Page: 1680×947pt landscape (16:9)
+                            const pageWidth = config.page?.width || 1680;
+                            const pageHeight = config.page?.height || 947;
+                            const insets = {
+                                left: 80,    // Space for page edge
+                                right: 80,   // Space for page edge
+                                top: 140,    // Space for department title
+                                bottom: 70   // Space for footer
+                            };
+
+                            const availableWidth = pageWidth - insets.left - insets.right;   // ~1520pt
+                            const availableHeight = pageHeight - insets.top - insets.bottom; // ~737pt
+
+                            // Compute optimal scale to fill 95% of available area (aggressive but safe)
+                            const scaleInfo = this.computeOptimalScale(
+                                contentBounds,
+                                availableWidth,
+                                availableHeight,
+                                0.95  // Fill 95% for maximum page usage
+                            );
+
+                            console.log(`[Export] Chart "${chartData.name}": content ${Math.round(contentBounds.width)}×${Math.round(contentBounds.height)}px, scale ${scaleInfo.scale.toFixed(2)}x to fill page`);
+
+                            // Always use full: true to call chart.fit() for consistent framing
+                            tempChart.exportImg({
+                                full: true,
+                                save: false,
+                                scale: this.exportQuality.scale,
                             onLoad: async (base64Image) => {
                                 try {
                                     const compressedImage = await this.compressImage(
@@ -402,7 +865,10 @@ class BulkExportManager {
                                             height: captureHeight
                                         },
                                         preview: previewImage,
-                                        svg: svgMarkup
+                                        svg: svgMarkup,
+                                        // Include bounds and scale metadata for PDF placement
+                                        bounds: contentBounds,
+                                        scale: scaleInfo
                                     });
                                 } finally {
                                     tempChart.clear();
@@ -410,6 +876,7 @@ class BulkExportManager {
                                 }
                             }
                         });
+                        }, 200); // Wait 200ms for fit() to complete
                     })
                     .catch((waitError) => {
                         // Clean up on error too
@@ -667,6 +1134,35 @@ class BulkExportManager {
         });
     }
 
+    /**
+     * Check if viewState contains collapsed nodes
+     */
+    hasCollapsedNodes(viewState = {}) {
+        return Array.isArray(viewState.collapsedNodes) && viewState.collapsedNodes.length > 0;
+    }
+
+    /**
+     * Apply only collapsed/expanded state, ignoring zoom/pan
+     * This preserves user's expand/collapse intent while ensuring consistent framing
+     */
+    applyCollapsedState(chartInstance, viewState = {}) {
+        if (!chartInstance || typeof chartInstance.setExpanded !== 'function') {
+            return;
+        }
+        if (!Array.isArray(viewState.collapsedNodes) || viewState.collapsedNodes.length === 0) {
+            return;
+        }
+
+        // Collapse the nodes that were collapsed in the editor
+        // Pass false to setExpanded to collapse the node
+        viewState.collapsedNodes.forEach(nodeId => {
+            chartInstance.setExpanded(nodeId, false);
+        });
+    }
+
+    /**
+     * @deprecated Use applyCollapsedState instead - this respects zoom/pan which causes whitespace issues
+     */
     shouldRespectViewport(viewState = {}) {
         if (!viewState) return false;
         const hasCollapsed = Array.isArray(viewState.collapsedNodes) && viewState.collapsedNodes.length > 0;
@@ -677,6 +1173,9 @@ class BulkExportManager {
         return hasCollapsed || zoomChanged || panChanged;
     }
 
+    /**
+     * @deprecated Use applyCollapsedState instead
+     */
     applyViewStateTransform(chartInstance, viewState = {}) {
         if (!chartInstance || typeof chartInstance.getChartState !== 'function') {
             return;
@@ -705,6 +1204,86 @@ class BulkExportManager {
     }
 
     /**
+     * Load cover image mapping configuration
+     * @returns {Promise<Object>} Cover image mapping config
+     */
+    async loadCoverImageMapping() {
+        try {
+            const response = await fetch('assets/export/cover-image-mapping.json');
+            if (!response.ok) {
+                console.warn('[Export] Cover image mapping not found, proceeding without cover images');
+                return null;
+            }
+            const mapping = await response.json();
+            console.log(`[Export] Loaded ${mapping.coverImages?.length || 0} cover image mappings`);
+            return mapping;
+        } catch (error) {
+            console.warn('[Export] Failed to load cover image mapping:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Find matching cover image for a chart
+     * @param {Object} chart - Chart data
+     * @param {Object} mapping - Cover image mapping config
+     * @returns {string} Cover image file path (always returns a value, fallback if no match)
+     */
+    findCoverImageForChart(chart, mapping) {
+        const fallback = mapping?.fallbackImage || 'assets/cover-images/Slide1.png';
+
+        if (!mapping || !mapping.coverImages) {
+            console.log(`[Export] No mapping available, using fallback: ${fallback}`);
+            return fallback;
+        }
+
+        const chartName = chart.title || chart.chartName || '';
+        const chartDept = chart.department || chart.departmentTag || '';
+        const chartCoverId = chart.coverId || chart.chartData?.coverId;
+
+        // Warn if coverId is missing (should be set on all charts)
+        if (!chartCoverId) {
+            console.warn(`[Export] Chart "${chartName}" missing coverId - using legacy fallback matching. Set coverId in chart settings for stable export.`);
+        }
+
+        // Priority 1: Check for stable coverId (preferred method)
+        if (chartCoverId) {
+            const coverByIdMatch = mapping.coverImages.find(c => c.id === chartCoverId);
+            if (coverByIdMatch) {
+                console.log(`[Export] Matched chart "${chartName}" to cover image "${coverByIdMatch.file}" by coverId: ${chartCoverId}`);
+                return coverByIdMatch.file;
+            } else {
+                console.warn(`[Export] Chart "${chartName}" has coverId "${chartCoverId}" but no matching cover found`);
+            }
+        }
+
+        // Priority 2: Legacy fallback - check chart name matches
+        for (const coverImage of mapping.coverImages) {
+            if (coverImage.matchNames && Array.isArray(coverImage.matchNames)) {
+                for (const matchName of coverImage.matchNames) {
+                    if (chartName.toLowerCase().includes(matchName.toLowerCase())) {
+                        console.log(`[Export] Matched chart "${chartName}" to cover image "${coverImage.file}" by name (legacy)`);
+                        return coverImage.file;
+                    }
+                }
+            }
+
+            // Priority 3: Legacy fallback - check department matches
+            if (coverImage.matchDepartments && Array.isArray(coverImage.matchDepartments)) {
+                for (const matchDept of coverImage.matchDepartments) {
+                    if (chartDept.toLowerCase().includes(matchDept.toLowerCase())) {
+                        console.log(`[Export] Matched chart "${chartName}" (dept: "${chartDept}") to cover image "${coverImage.file}" by department (legacy)`);
+                        return coverImage.file;
+                    }
+                }
+            }
+        }
+
+        console.log(`[Export] No cover image match found for chart "${chartName}" (dept: "${chartDept}", coverId: "${chartCoverId || 'none'}"), using fallback: ${fallback}`);
+        return fallback;
+    }
+
+    /**
      * Assemble all captured charts into a single PDF
      */
     async assemblePDF() {
@@ -717,8 +1296,100 @@ class BulkExportManager {
 
         const config = await this.getTemplateConfig();
         const { jsPDF } = window.jspdf;
-        const includeOverview = this.shouldIncludeOverviewPage();
-        const totalPages = 1 + (includeOverview ? 1 : 0) + this.capturedCharts.length;
+        const includeOverview = false; // Overview page removed from export
+
+        // Load cover image mapping
+        const coverImageMapping = await this.loadCoverImageMapping();
+
+        // Get document cover image
+        const documentCover = coverImageMapping?.documentCoverImage || 'assets/cover-images/Slide1.png';
+
+        // Pre-process charts to add cover info
+        const chartsWithCoverInfo = this.capturedCharts.map(chart => {
+            const coverImage = this.findCoverImageForChart(chart, coverImageMapping);
+            const coverId = chart.coverId || chart.chartData?.coverId;
+            return {
+                ...chart,
+                coverImagePath: coverImage,
+                coverId: coverId
+            };
+        });
+
+        // Group charts by coverId
+        const coverOrder = coverImageMapping?.coverOrder || [];
+        const chartGroups = new Map(); // Map<coverId, charts[]>
+
+        chartsWithCoverInfo.forEach(chart => {
+            const coverId = chart.coverId || 'no-cover';
+            if (!chartGroups.has(coverId)) {
+                chartGroups.set(coverId, []);
+            }
+            chartGroups.get(coverId).push(chart);
+        });
+
+        // Sort charts within each group by coverOrderIndex, then createdAt, then chartId
+        for (const [coverId, charts] of chartGroups.entries()) {
+            charts.sort((a, b) => {
+                // Priority 1: Sort by coverOrderIndex (numeric, lower first, undefined/null last)
+                const aOrder = a.coverOrderIndex ?? a.chartData?.coverOrderIndex ?? Infinity;
+                const bOrder = b.coverOrderIndex ?? b.chartData?.coverOrderIndex ?? Infinity;
+                if (aOrder !== bOrder) {
+                    return aOrder - bOrder;
+                }
+
+                // Priority 2: Sort by creation date (deterministic)
+                const aDate = new Date(a.createdAt || a.chartData?.createdAt || a.lastModified || 0);
+                const bDate = new Date(b.createdAt || b.chartData?.createdAt || b.lastModified || 0);
+                if (aDate.getTime() !== bDate.getTime()) {
+                    return aDate - bDate;
+                }
+
+                // Priority 3: Sort by chartId (stable tie-breaker)
+                return (a.id || a.chartId || '').localeCompare(b.id || b.chartId || '');
+            });
+        }
+
+        // Sort groups by coverOrder position
+        const sortedCoverIds = Array.from(chartGroups.keys()).sort((a, b) => {
+            const aIndex = coverOrder.indexOf(a);
+            const bIndex = coverOrder.indexOf(b);
+
+            // Both in order: sort by position
+            if (aIndex !== -1 && bIndex !== -1) {
+                return aIndex - bIndex;
+            }
+            // Only a in order: a goes first
+            if (aIndex !== -1) return -1;
+            // Only b in order: b goes first
+            if (bIndex !== -1) return 1;
+            // Neither in order: alphabetical
+            return a.localeCompare(b);
+        });
+
+        console.log(`[Export] Organized ${chartsWithCoverInfo.length} charts into ${sortedCoverIds.length} cover groups`);
+
+        // Filter to groups that will actually render a cover (exclude 'no-cover')
+        const coverGroups = sortedCoverIds.filter(id => id !== 'no-cover');
+
+        // Warn about charts missing coverId (non-blocking)
+        const noCoverCharts = chartGroups.get('no-cover');
+        if (noCoverCharts && noCoverCharts.length > 0) {
+            console.warn(`[Export] ${noCoverCharts.length} chart(s) missing coverId - will export without cover page`);
+        }
+
+        // Get first cover group's cover to check for duplicate with document cover
+        const firstCoverGroupId = coverGroups[0];
+        const firstCoverGroupCover = firstCoverGroupId && chartGroups.get(firstCoverGroupId)?.[0]?.coverImagePath;
+        const skipFirstGroupCover = firstCoverGroupCover === documentCover;
+
+        // Calculate total pages: 1 (doc cover) + actual covers + all charts
+        // groupCoverCount = number of groups that will render a cover (excludes 'no-cover' and skip-first logic)
+        const groupCoverCount = coverGroups.length - (skipFirstGroupCover ? 1 : 0);
+        const totalPages = 1 + groupCoverCount + this.capturedCharts.length;
+
+        if (skipFirstGroupCover) {
+            console.log(`[Export] Skipping first group cover to avoid duplicate (both use ${documentCover})`);
+        }
 
         const pdf = new jsPDF({
             orientation: 'l',
@@ -727,55 +1398,76 @@ class BulkExportManager {
         });
 
         let pageNumber = 1;
-        const updatedText = this.getLatestUpdatedDate();
 
-        await ExportTemplate.drawCoverPage(pdf, {
-            company: 'RRC',
-            companySecondary: 'COMPANIES',
-            title: 'Organizational Chart',
-            updated: updatedText,
-            totalPages,
+        // First page: Main document cover
+        await ExportTemplate.drawCoverImagePage(pdf, documentCover, {
             pageNumber,
+            totalPages,
             classification: 'CONFIDENTIAL',
             url: 'www.RRCcompanies.com'
         });
 
-        if (includeOverview) {
-            pdf.addPage();
-            pageNumber += 1;
-            await ExportTemplate.drawOverviewPage(pdf, this.buildOverviewDivisions(), {
-                title: 'Company Overview',
-                totalPages,
-                pageNumber,
-                classification: 'CONFIDENTIAL',
-                url: 'www.RRCcompanies.com'
-            });
-        }
+        // Render each cover group
+        for (let groupIndex = 0; groupIndex < sortedCoverIds.length; groupIndex++) {
+            const coverId = sortedCoverIds[groupIndex];
+            const groupCharts = chartGroups.get(coverId);
+            const isNoCoverGroup = coverId === 'no-cover';
+            const isFirstCoverGroup = coverId === firstCoverGroupId;
 
-        for (const captured of this.capturedCharts) {
-            pdf.addPage();
-            pageNumber += 1;
-            await ExportTemplate.drawDepartmentPage(
-                pdf,
-                {
-                    name: captured.title,
-                    tagline: captured.department || '',
-                    stats: {
-                        nodes: captured.nodeCount,
-                        people: captured.peopleCount,
-                        updated: this.formatDateForDisplay(captured.lastModified)
-                    },
-                    chartData: captured.chartData,
-                    tags: captured.tags || []
-                },
-                captured.snapshot,
-                {
+            if (!groupCharts || groupCharts.length === 0) continue;
+
+            // Get cover image for this group (all charts in group have same cover)
+            const groupCover = groupCharts[0].coverImagePath;
+
+            // Insert ONE cover page per group
+            // Skip if: (1) no-cover group (would be duplicate Slide1), OR
+            //          (2) first cover group and its cover matches document cover
+            const shouldSkipCover = isNoCoverGroup || (isFirstCoverGroup && skipFirstGroupCover);
+
+            if (!shouldSkipCover) {
+                pdf.addPage();
+                pageNumber += 1;
+                await ExportTemplate.drawCoverImagePage(pdf, groupCover, {
                     pageNumber,
                     totalPages,
                     classification: 'CONFIDENTIAL',
                     url: 'www.RRCcompanies.com'
-                }
-            );
+                });
+                console.log(`[Export] Inserted cover page "${groupCover}" for group "${coverId}" (${groupCharts.length} charts)`);
+            } else {
+                const reason = isNoCoverGroup
+                    ? 'charts missing coverId (would duplicate document cover)'
+                    : 'already shown as document cover';
+                console.log(`[Export] Skipped cover for group "${coverId}" (${reason})`);
+            }
+
+            // Render all charts in this group
+            for (const captured of groupCharts) {
+                pdf.addPage();
+                pageNumber += 1;
+                await ExportTemplate.drawDepartmentPage(
+                    pdf,
+                    {
+                        name: captured.title,
+                        tagline: captured.department || '',
+                        stats: {
+                            nodes: captured.nodeCount,
+                            people: captured.peopleCount,
+                            updated: this.formatDateForDisplay(captured.lastModified)
+                        },
+                        chartData: captured.chartData,
+                        tags: captured.tags || []
+                    },
+                    captured.snapshot,
+                    {
+                        pageNumber,
+                        totalPages,
+                        classification: 'CONFIDENTIAL',
+                        url: 'www.RRCcompanies.com'
+                    }
+                );
+                console.log(`[Export] Rendered chart "${captured.title}" (order: ${captured.coverOrderIndex ?? 'auto'})`);
+            }
         }
 
         return pdf;
@@ -1016,12 +1708,13 @@ class BulkExportManager {
             console.log('[Debug] SVG size:', snapshot.svg.length, 'characters');
 
             // Open the SVG in a new window
+            const escapeHtml = (str) => String(str).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
             const previewWindow = window.open('', '_blank');
             previewWindow.document.write(`
                 <!DOCTYPE html>
                 <html>
                 <head>
-                    <title>SVG Preview: ${chart.chartName}</title>
+                    <title>SVG Preview: ${escapeHtml(chart.chartName)}</title>
                     <style>
                         body {
                             margin: 0;
@@ -1069,7 +1762,7 @@ class BulkExportManager {
                 </head>
                 <body>
                     <div class="header">
-                        <h1>SVG Preview: ${chart.chartName}</h1>
+                        <h1>SVG Preview: ${escapeHtml(chart.chartName)}</h1>
                         <p>Debug preview of exported SVG with resolved styles</p>
                         <div class="stats">
                             <span class="stat"><strong>Nodes:</strong> ${chart.nodes?.length || 0}</span>

@@ -1,0 +1,75 @@
+{
+  "routes": [
+    {
+      "route": "/api/v1/admin/*",
+      "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/api/v1/access-requests*",
+      "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/api/v1/charts/{chartId}/access-requests",
+      "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/api/v1/charts",
+      "methods": ["GET"],
+      "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/api/v1/charts/{chartId}",
+      "methods": ["GET"],
+      "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/api/v1/charts",
+      "methods": ["POST", "PUT", "DELETE"],
+      "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/api/v1/charts/{chartId}",
+      "methods": ["POST", "PUT", "DELETE"],
+      "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/api/v1/charts/{chartId}/share",
+      "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/api/*",
+      "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/login",
+      "redirect": "/.auth/login/aad"
+    },
+    {
+      "route": "/*",
+      "allowedRoles": ["anonymous", "authenticated"]
+    }
+  ],
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/api/*", "/.auth/*", "/assets/*", "/css/*", "/js/*", "/fonts/*"]
+  },
+  "responseOverrides": {
+    "401": {
+      "redirect": "/.auth/login/aad",
+      "statusCode": 302
+    },
+    "403": {
+      "rewrite": "/403.html"
+    }
+  },
+  "globalHeaders": {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-XSS-Protection": "1; mode=block",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://d3js.org https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: https:; connect-src 'self' https://*.azurestaticapps.net https://*.applicationinsights.azure.com"
+  },
+  "platform": {
+    "apiRuntime": "node:18"
+  }
+}

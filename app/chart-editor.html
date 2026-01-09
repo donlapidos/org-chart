@@ -5,12 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chart Editor - Dynamic Org Chart Creator</title>
     <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/modernization-styles.css">
+    <link rel="stylesheet" href="css/accessibility.css">
 
-    <!-- D3 and Org Chart Dependencies -->
-    <script src="https://d3js.org/d3.v7.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3-flextree@2.1.2/build/d3-flextree.js"></script>
-    <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- D3 and Org Chart Dependencies - LOCAL -->
+    <script src="vendor/d3.v7.min.js"></script>
+    <script src="vendor/d3-shape.v3.min.js"></script>
+    <script src="vendor/d3-flextree.js"></script>
+    <script src="vendor/html2canvas.min.js"></script>
+    <script src="vendor/jspdf.umd.min.js"></script>
 
     <style>
         body {
@@ -287,9 +290,12 @@
     </style>
 </head>
 <body>
+    <!-- Skip Navigation Link for Screen Readers -->
+    <a href="#chartCanvas" class="skip-link">Skip to chart canvas</a>
+
     <div class="editor-layout">
         <!-- Editor Header -->
-        <div class="editor-header">
+        <header class="editor-header" role="banner">
             <div class="editor-title">
                 <a href="index.html" class="btn btn-secondary btn-sm">← Back</a>
                 <div>
@@ -298,42 +304,92 @@
                 </div>
             </div>
             <div class="toolbar-group">
-                <button class="btn btn-secondary btn-sm" onclick="editor.showChartSettings()">
-                    ⚙️ Settings
+                <button id="themeToggle" class="btn btn-icon" title="Toggle dark mode" aria-label="Toggle theme">
+                    <svg class="icon-svg theme-icon-light" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                    <svg class="icon-svg theme-icon-dark hidden" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <span>Theme</span>
                 </button>
-                <button class="btn btn-primary btn-sm" onclick="editor.saveChart()">
-                    💾 Save
+                <button class="btn btn-outline-secondary btn-sm" id="settingsBtn" onclick="editor.showChartSettings()">
+                    <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M12 1v6m0 6v6m5.2-14.2-4.2 4.2m0 6 4.2 4.2M1 12h6m6 0h6m-14.2-5.2 4.2 4.2m0 6-4.2 4.2"></path>
+                    </svg>
+                    Settings
+                </button>
+                <button class="btn btn-primary btn-sm" id="saveBtn" onclick="editor.saveChart()">
+                    <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                        <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                        <polyline points="7 3 7 8 15 8"></polyline>
+                    </svg>
+                    Save
                 </button>
             </div>
-        </div>
+        </header>
 
         <!-- Editor Toolbar -->
         <div class="editor-toolbar">
-            <button class="btn btn-secondary btn-sm" onclick="editor.addNode()" title="Add New Node">
-                ➕ Add Node
+            <button class="btn btn-outline-secondary btn-sm" id="addNodeBtn" onclick="editor.addNode()" title="Add New Node">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Add Node
             </button>
-            <button class="btn btn-secondary btn-sm" onclick="editor.expandAll()" title="Expand All Nodes">
-                📂 Expand All
+            <button class="btn btn-outline-secondary btn-sm" onclick="editor.expandAll()" title="Expand All Nodes">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                </svg>
+                Expand All
             </button>
-            <button class="btn btn-secondary btn-sm" onclick="editor.collapseAll()" title="Collapse All Nodes">
-                📁 Collapse All
-            </button>
-
-            <div class="toolbar-separator"></div>
-
-            <button class="btn btn-secondary btn-sm" onclick="editor.zoomIn()" title="Zoom In">
-                🔍 Zoom In
-            </button>
-            <button class="btn btn-secondary btn-sm" onclick="editor.zoomOut()" title="Zoom Out">
-                🔎 Zoom Out
-            </button>
-            <button class="btn btn-secondary btn-sm" onclick="editor.fitToScreen()" title="Fit to Screen">
-                📏 Fit
+            <button class="btn btn-outline-secondary btn-sm" onclick="editor.collapseAll()" title="Collapse All Nodes">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
+                Collapse All
             </button>
 
             <div class="toolbar-separator"></div>
 
-            <select class="form-select" onchange="editor.changeLayout(this.value)" id="layoutSelect" style="width: auto;">
+            <button class="btn btn-outline-secondary btn-sm" onclick="editor.zoomIn()" title="Zoom In">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    <line x1="11" y1="8" x2="11" y2="14"></line>
+                    <line x1="8" y1="11" x2="14" y2="11"></line>
+                </svg>
+                Zoom In
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="editor.zoomOut()" title="Zoom Out">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    <line x1="8" y1="11" x2="14" y2="11"></line>
+                </svg>
+                Zoom Out
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="editor.fitToScreen()" title="Fit to Screen">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                </svg>
+                Fit
+            </button>
+
+            <div class="toolbar-separator"></div>
+
+            <select class="form-select w-auto" onchange="editor.changeLayout(this.value)" id="layoutSelect">
                 <option value="top">Vertical (Top-Down)</option>
                 <option value="bottom">Vertical (Bottom-Up)</option>
                 <option value="left">Horizontal (Left-Right)</option>
@@ -342,81 +398,127 @@
 
             <div class="toolbar-separator"></div>
 
-            <button class="btn btn-secondary btn-sm" onclick="editor.exportPNG()" title="Export as PNG">
-                🖼️ PNG
+            <button class="btn btn-outline-secondary btn-sm" onclick="editor.exportPNG()" title="Export as PNG">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                    <polyline points="21 15 16 10 5 21"></polyline>
+                </svg>
+                PNG
             </button>
-            <button class="btn btn-secondary btn-sm" onclick="editor.exportJPEG()" title="Export as JPEG">
-                📷 JPEG
+            <button class="btn btn-outline-secondary btn-sm" onclick="editor.exportJPEG()" title="Export as JPEG">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                    <polyline points="21 15 16 10 5 21"></polyline>
+                </svg>
+                JPEG
             </button>
-            <button class="btn btn-secondary btn-sm" onclick="editor.exportPDF()" title="Export as PDF">
-                📄 PDF
+            <button class="btn btn-outline-secondary btn-sm" onclick="editor.exportPDF()" title="Export as PDF">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                PDF
             </button>
         </div>
 
         <!-- Editor Content -->
-        <div class="editor-content">
-            <div id="chartCanvas" class="chart-canvas"></div>
-        </div>
+        <main class="editor-content" role="main">
+            <div id="chartCanvas" class="chart-canvas" role="region" aria-label="Organization chart visualization"></div>
+        </main>
     </div>
 
+    <!-- ARIA Live Region for Status Announcements -->
+    <div class="aria-live-region" role="status" aria-live="polite" aria-atomic="true" id="statusAnnouncer"></div>
+    <div class="aria-live-region" role="alert" aria-live="assertive" aria-atomic="true" id="alertAnnouncer"></div>
+
     <!-- Node Editor Sidebar -->
-    <div id="nodeSidebar" class="node-editor-sidebar">
+    <aside id="nodeSidebar" class="node-editor-sidebar" role="complementary" aria-label="Node editor">
         <div class="sidebar-header">
             <h2 id="sidebarTitle">Add Node</h2>
             <button class="btn btn-secondary btn-sm" onclick="editor.closeSidebar()">×</button>
         </div>
         <form id="nodeForm" class="sidebar-content" onsubmit="editor.saveNode(event)">
-            <div class="form-group">
-                <label class="form-label" for="nodeDepartment">Department/Unit Name</label>
-                <input
-                    type="text"
-                    id="nodeDepartment"
-                    class="form-input"
-                    placeholder="e.g., Engineering Team A"
-                >
-                <p class="form-help">This will appear in the header bar</p>
+            <!-- Node Details Section -->
+            <div class="sidebar-card">
+                <div class="sidebar-card-header">
+                    <h3 class="sidebar-card-title">Node Details</h3>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="nodeDepartment">Department/Unit Name</label>
+                    <input
+                        type="text"
+                        id="nodeDepartment"
+                        class="form-input"
+                        placeholder="e.g., Engineering Team A"
+                    >
+                    <p class="form-help">This will appear in the header bar</p>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="nodeParent">Reports To</label>
+                    <select id="nodeParent" class="form-select">
+                        <option value="">-- Top Level (No Parent) --</option>
+                    </select>
+                    <p class="form-help">Select the parent node</p>
+                </div>
             </div>
 
-            <div class="form-group">
-                <label class="form-label" for="nodeParent">Reports To</label>
-                <select id="nodeParent" class="form-select">
-                    <option value="">-- Top Level (No Parent) --</option>
-                </select>
-                <p class="form-help">Select the parent node</p>
-            </div>
-
-            <!-- Structured Role Builder Section -->
-            <div class="form-group">
-                <label class="form-label">📋 Roles & People</label>
+            <!-- Roles & People Section -->
+            <div class="sidebar-card">
+                <div class="sidebar-card-header">
+                    <h3 class="sidebar-card-title">Roles & People</h3>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="editor.addRole()">
+                        <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        Add Role
+                    </button>
+                </div>
                 <div id="rolesContainer">
                     <!-- Roles will be rendered here by JavaScript -->
                 </div>
-                <button type="button" class="btn btn-secondary btn-sm" style="margin-top: 0.5rem;" onclick="editor.addRole()">
-                    + Add Role
-                </button>
             </div>
 
             <input type="hidden" id="nodeId">
             <input type="hidden" id="nodeAction" value="add">
         </form>
         <div class="sidebar-footer">
-            <button type="button" class="btn btn-secondary" style="flex: 1;" onclick="editor.closeSidebar()">
+            <button type="button" class="btn btn-ghost" onclick="editor.closeSidebar()">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
                 Cancel
             </button>
-            <button type="button" class="btn btn-danger" id="deleteNodeBtn" style="display: none;" onclick="editor.deleteNode()">
-                🗑️ Delete
+            <button type="button" class="btn btn-ghost-danger hidden" id="deleteNodeBtn" onclick="editor.deleteNode()">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+                Delete
             </button>
-            <button type="submit" form="nodeForm" class="btn btn-primary" style="flex: 1;">
+            <button type="submit" form="nodeForm" class="btn btn-primary flex-1">
+                <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                    <polyline points="7 3 7 8 15 8"></polyline>
+                </svg>
                 Save Node
             </button>
         </div>
-    </div>
+    </aside>
 
     <!-- Chart Settings Modal -->
-    <div id="settingsModal" class="modal">
+    <div id="settingsModal" class="modal" role="dialog" aria-labelledby="settingsModalTitle" aria-modal="true">
         <div class="modal-content">
             <div class="modal-header">
-                <h2 class="modal-title">Chart Settings</h2>
+                <h2 class="modal-title" id="settingsModalTitle">Chart Settings</h2>
                 <button class="modal-close" onclick="editor.closeSettingsModal()">×</button>
             </div>
             <form id="settingsForm" onsubmit="editor.saveSettings(event)">
@@ -441,11 +543,24 @@
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label" for="settingsDescription">Description</label>
-                        <textarea
-                            id="settingsDescription"
-                            class="form-textarea"
-                        ></textarea>
+                        <label class="form-label" for="settingsCoverId">Export Cover Image</label>
+                        <select id="settingsCoverId" class="form-input">
+                            <option value="">Default (Generic Org Chart)</option>
+                        </select>
+                        <small style="color: #64748b; font-size: 12px;">Stable cover image for PDF export. Changes here won't affect chart name or department.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="settingsCoverOrderIndex">Order within Cover (optional)</label>
+                        <input
+                            type="number"
+                            id="settingsCoverOrderIndex"
+                            class="form-input"
+                            min="1"
+                            step="1"
+                            placeholder="Leave blank for automatic ordering"
+                        >
+                        <small style="color: #64748b; font-size: 12px;">Position within the cover group (1, 2, 3...). Lower numbers appear first. Leave blank to order by creation date.</small>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -457,8 +572,15 @@
     </div>
 
     <!-- Scripts -->
-    <script src="../build/d3-org-chart.js"></script>
+    <script src="js/theme.js"></script>
+    <script src="js/toast.js"></script>
+    <script src="js/accessibility.js"></script>
+    <script src="js/d3-org-chart.js"></script>
     <script src="js/storage.js"></script>
+    <script src="js/org-node-renderer.js"></script>
+    <!-- Authentication scripts - keep EasyAuth session alive -->
+    <script src="js/api-client.js"></script>
+    <script src="js/auth.js"></script>
     <script src="js/chart-editor.js"></script>
 </body>
 </html>
