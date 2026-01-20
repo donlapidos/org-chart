@@ -101,7 +101,9 @@ class CloudStorage {
         }
 
         try {
-            const charts = await window.apiClient.getCharts();
+            const response = await window.apiClient.getCharts();
+            // Handle both old (array) and new (object with .charts) response formats
+            const charts = Array.isArray(response) ? response : (response?.charts || []);
             console.log(`Loaded ${charts.length} charts from cloud`);
             this.lastSyncTime = new Date();
             return charts;

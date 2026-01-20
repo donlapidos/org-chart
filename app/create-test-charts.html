@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="assets/rrc-favicon.svg">
+    <link rel="icon" type="image/png" href="assets/rrc-favicon.png">
+    <title>Create Test Charts</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f8fafc;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #1e293b;
+            margin-bottom: 10px;
+        }
+        p {
+            color: #64748b;
+            margin-bottom: 30px;
+        }
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background: #1d4ed8;
+        }
+        button.secondary {
+            background: #64748b;
+        }
+        button.secondary:hover {
+            background: #475569;
+        }
+        button.success {
+            background: #10b981;
+        }
+        button.success:hover {
+            background: #059669;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+        .status.success {
+            background: #d1fae5;
+            color: #065f46;
+            display: block;
+        }
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
+            display: block;
+        }
+        .chart-list {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8fafc;
+            border-radius: 8px;
+        }
+        .chart-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: white;
+            border-left: 3px solid #2563eb;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Test Chart Generator</h1>
+        <p>Create sample organizational charts for testing the bulk PDF export feature</p>
+
+        <div>
+            <button onclick="createTestCharts()">Create 3 Test Charts</button>
+            <button onclick="createLargeChart()" class="secondary">Create Large Chart (50+ nodes)</button>
+            <button onclick="clearAllCharts()" class="secondary">Clear All Charts</button>
+            <button onclick="window.location.href='index.html'" class="success">Go to Dashboard</button>
+        </div>
+
+        <div id="status" class="status"></div>
+        <div id="chartList" class="chart-list" style="display: none;"></div>
+    </div>
+
+    <script src="js/storage.js"></script>
+    <script>
+        function showStatus(message, type = 'success') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+
+        function updateChartList() {
+            const charts = storage.getChartsArray();
+            const listEl = document.getElementById('chartList');
+
+            if (charts.length === 0) {
+                listEl.style.display = 'none';
+                return;
+            }
+
+            listEl.style.display = 'block';
+            listEl.innerHTML = '<strong>Current Charts:</strong><br>';
+            charts.forEach(chart => {
+                const div = document.createElement('div');
+                div.className = 'chart-item';
+                div.textContent = `${chart.chartName} (${chart.nodes?.length || 0} nodes)`;
+                listEl.appendChild(div);
+            });
+        }
+
+        function createTestCharts() {
+            try {
+                // Chart 1: Executive Team (Multi-person nodes)
+                const chart1 = storage.createChart({
+                    chartName: 'Executive Leadership Team',
+                    departmentTag: 'Executive',
+                    description: 'Top-level executive organizational structure with shared leadership roles',
+                    nodes: [
+                        {
+                            id: storage.generateNodeId(),
+                            parentId: null,
+                            members: [
+                                {
+                                    roleLabel: 'Chief Executive Officer',
+                                    entries: [
+                                        { name: 'Sarah Chen', email: 'sarah.chen@company.com', phone: '(555) 100-0001', photoUrl: '' }
+                                    ]
+                                }
+                            ],
+                            meta: {
+                                department: 'Executive Office',
+                                notes: 'CEO and founder'
+                            }
+                        }
+                    ]
+                });
+
+                // Add children to chart 1
+                const ceoId = chart1.nodes[0].id;
+                const cfoId = storage.generateNodeId();
+                const ctoId = storage.generateNodeId();
+                const cooId = storage.generateNodeId();
+
+                chart1.nodes.push({
+                    id: cfoId,
+                    parentId: ceoId,
+                    members: [
+                        {
+                            roleLabel: 'Chief Financial Officer',
+                            entries: [
+                                { name: 'Michael Rodriguez', email: 'michael.r@company.com', phone: '(555) 100-0002', photoUrl: '' }
+                            ]
+                        }
+                    ],
+                    meta: { department: 'Finance', notes: '' }
+                });
+
+                chart1.nodes.push({
+                    id: ctoId,
+                    parentId: ceoId,
+                    members: [
+                        {
+                            roleLabel: 'Chief Technology Officer',
+                            entries: [
+                                { name: 'Emily Zhang', email: 'emily.z@company.com', phone: '(555) 100-0003', photoUrl: '' },
+                                { name: 'David Kim', email: 'david.k@company.com', phone: '(555) 100-0004', photoUrl: '' }
+                            ]
+                        }
+                    ],
+                    meta: { department: 'Technology', notes: 'Co-CTOs' }
+                });
+
+                chart1.nodes.push({
+                    id: cooId,
+                    parentId: ceoId,
+                    members: [
+                        {
+                            roleLabel: 'Chief Operating Officer',
+                            entries: [
+                                { name: 'Jennifer Martinez', email: 'jen.m@company.com', phone: '(555) 100-0005', photoUrl: '' }
+                            ]
+                        }
+                    ],
+                    meta: { department: 'Operations', notes: '' }
+                });
+
+                storage.updateChart(chart1.chartId, chart1);
+
+                // Chart 2: Engineering Department
+                const chart2 = storage.createChart({
+                    chartName: 'Engineering Department - Q4 2025',
+                    departmentTag: 'Engineering',
+                    description: 'Software engineering teams with multiple squads and roles',
+                    nodes: [
+                        {
+                            id: storage.generateNodeId(),
+                            parentId: null,
+                            members: [
+                                {
+                                    roleLabel: 'VP of Engineering',
+                                    entries: [
+                                        { name: 'Alex Thompson', email: 'alex.t@company.com', phone: '', photoUrl: '' }
+                                    ]
+                                }
+                            ],
+                            meta: { department: 'Engineering Leadership', notes: '' }
+                        }
+                    ]
+                });
+
+                const vpEngId = chart2.nodes[0].id;
+                const backendTeamId = storage.generateNodeId();
+                const frontendTeamId = storage.generateNodeId();
+
+                chart2.nodes.push({
+                    id: backendTeamId,
+                    parentId: vpEngId,
+                    members: [
+                        {
+                            roleLabel: 'Backend Team Lead',
+                            entries: [
+                                { name: 'Marcus Johnson', email: '', phone: '', photoUrl: '' }
+                            ]
+                        },
+                        {
+                            roleLabel: 'Senior Backend Engineers',
+                            entries: [
+                                { name: 'Priya Patel', email: '', phone: '', photoUrl: '' },
+                                { name: 'Carlos Santos', email: '', phone: '', photoUrl: '' },
+                                { name: 'Lisa Wang', email: '', phone: '', photoUrl: '' }
+                            ]
+                        }
+                    ],
+                    meta: { department: 'Backend Engineering', notes: '' }
+                });
+
+                chart2.nodes.push({
+                    id: frontendTeamId,
+                    parentId: vpEngId,
+                    members: [
+                        {
+                            roleLabel: 'Frontend Team Lead',
+                            entries: [
+                                { name: 'Sophie Anderson', email: '', phone: '', photoUrl: '' }
+                            ]
+                        },
+                        {
+                            roleLabel: 'Senior Frontend Engineers',
+                            entries: [
+                                { name: 'James Wilson', email: '', phone: '', photoUrl: '' },
+                                { name: 'Nina Sharma', email: '', phone: '', photoUrl: '' }
+                            ]
+                        },
+                        {
+                            roleLabel: 'UX Designer',
+                            entries: [
+                                { name: 'Oliver Brown', email: '', phone: '', photoUrl: '' }
+                            ]
+                        }
+                    ],
+                    meta: { department: 'Frontend Engineering', notes: '' }
+                });
+
+                storage.updateChart(chart2.chartId, chart2);
+
+                // Chart 3: Sales & Marketing (Horizontal layout)
+                const chart3 = storage.createChart({
+                    chartName: 'Sales & Marketing Organization',
+                    departmentTag: 'Sales',
+                    description: 'Revenue-generating teams across regions',
+                    layout: 'left',
+                    nodes: [
+                        {
+                            id: storage.generateNodeId(),
+                            parentId: null,
+                            members: [
+                                {
+                                    roleLabel: 'Chief Revenue Officer',
+                                    entries: [
+                                        { name: 'Rebecca Taylor', email: '', phone: '', photoUrl: '' }
+                                    ]
+                                }
+                            ],
+                            meta: { department: 'Revenue', notes: '' }
+                        }
+                    ]
+                });
+
+                const croId = chart3.nodes[0].id;
+                const salesDirId = storage.generateNodeId();
+                const marketingDirId = storage.generateNodeId();
+
+                chart3.nodes.push({
+                    id: salesDirId,
+                    parentId: croId,
+                    members: [
+                        {
+                            roleLabel: 'Sales Director',
+                            entries: [
+                                { name: 'Tom Anderson', email: '', phone: '', photoUrl: '' }
+                            ]
+                        },
+                        {
+                            roleLabel: 'Regional Managers',
+                            entries: [
+                                { name: 'Jessica Lee (West)', email: '', phone: '', photoUrl: '' },
+                                { name: 'Robert Miller (East)', email: '', phone: '', photoUrl: '' },
+                                { name: 'Maria Garcia (Central)', email: '', phone: '', photoUrl: '' }
+                            ]
+                        }
+                    ],
+                    meta: { department: 'Sales', notes: '' }
+                });
+
+                chart3.nodes.push({
+                    id: marketingDirId,
+                    parentId: croId,
+                    members: [
+                        {
+                            roleLabel: 'Marketing Director',
+                            entries: [
+                                { name: 'Amanda Foster', email: '', phone: '', photoUrl: '' }
+                            ]
+                        },
+                        {
+                            roleLabel: 'Marketing Team',
+                            entries: [
+                                { name: 'Kevin Park', email: '', phone: '', photoUrl: '' },
+                                { name: 'Laura Davis', email: '', phone: '', photoUrl: '' }
+                            ]
+                        }
+                    ],
+                    meta: { department: 'Marketing', notes: '' }
+                });
+
+                storage.updateChart(chart3.chartId, chart3);
+
+                showStatus('✅ Successfully created 3 test charts! Click "Go to Dashboard" to view them.', 'success');
+                updateChartList();
+
+            } catch (error) {
+                showStatus(`❌ Error creating test charts: ${error.message}`, 'error');
+                console.error(error);
+            }
+        }
+
+        function createLargeChart() {
+            try {
+                const chart = storage.createChart({
+                    chartName: 'Large Organization Structure (50+ nodes)',
+                    departmentTag: 'Corporate',
+                    description: 'Complex multi-level organizational hierarchy for performance testing',
+                    nodes: []
+                });
+
+                // Create CEO
+                const ceoId = storage.generateNodeId();
+                chart.nodes.push({
+                    id: ceoId,
+                    parentId: null,
+                    members: [{
+                        roleLabel: 'Chief Executive Officer',
+                        entries: [{ name: 'CEO Name', email: '', phone: '', photoUrl: '' }]
+                    }],
+                    meta: { department: 'Executive', notes: '' }
+                });
+
+                // Create 5 department heads
+                const departments = [
+                    { name: 'Engineering', color: 'blue' },
+                    { name: 'Sales', color: 'green' },
+                    { name: 'Marketing', color: 'purple' },
+                    { name: 'Finance', color: 'orange' },
+                    { name: 'Operations', color: 'red' }
+                ];
+
+                departments.forEach((dept, deptIndex) => {
+                    const deptHeadId = storage.generateNodeId();
+                    chart.nodes.push({
+                        id: deptHeadId,
+                        parentId: ceoId,
+                        members: [{
+                            roleLabel: `VP of ${dept.name}`,
+                            entries: [{ name: `VP ${dept.name}`, email: '', phone: '', photoUrl: '' }]
+                        }],
+                        meta: { department: dept.name, notes: '' }
+                    });
+
+                    // Create 3 managers per department
+                    for (let i = 0; i < 3; i++) {
+                        const managerId = storage.generateNodeId();
+                        chart.nodes.push({
+                            id: managerId,
+                            parentId: deptHeadId,
+                            members: [{
+                                roleLabel: `${dept.name} Manager ${i + 1}`,
+                                entries: [{ name: `Manager ${deptIndex}-${i}`, email: '', phone: '', photoUrl: '' }]
+                            }],
+                            meta: { department: dept.name, notes: '' }
+                        });
+
+                        // Create 2-3 team members per manager
+                        const teamSize = 2 + (i % 2);
+                        for (let j = 0; j < teamSize; j++) {
+                            chart.nodes.push({
+                                id: storage.generateNodeId(),
+                                parentId: managerId,
+                                members: [{
+                                    roleLabel: `Team Member`,
+                                    entries: [{ name: `Employee ${deptIndex}-${i}-${j}`, email: '', phone: '', photoUrl: '' }]
+                                }],
+                                meta: { department: dept.name, notes: '' }
+                            });
+                        }
+                    }
+                });
+
+                storage.updateChart(chart.chartId, chart);
+
+                showStatus(`✅ Successfully created large chart with ${chart.nodes.length} nodes!`, 'success');
+                updateChartList();
+
+            } catch (error) {
+                showStatus(`❌ Error creating large chart: ${error.message}`, 'error');
+                console.error(error);
+            }
+        }
+
+        function clearAllCharts() {
+            if (confirm('Are you sure you want to delete all charts? This cannot be undone.')) {
+                try {
+                    localStorage.setItem('orgCharts', JSON.stringify({}));
+                    showStatus('✅ All charts cleared!', 'success');
+                    updateChartList();
+                } catch (error) {
+                    showStatus(`❌ Error clearing charts: ${error.message}`, 'error');
+                }
+            }
+        }
+
+        // Show current charts on load
+        updateChartList();
+    </script>
+</body>
+</html>

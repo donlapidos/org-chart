@@ -23,14 +23,55 @@
 }
 
 .org-chart-node .node-header {
-    background: linear-gradient(135deg, #4A90E2 0%, #357ABD 100%);
+    background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-700) 100%);
     color: white;
     padding: 10px 14px;
     font-weight: 600;
     font-size: 13px;
-    border-bottom: 3px solid #FF6B35;
+    border-bottom: 3px solid var(--accent-500);
     text-align: center;
     letter-spacing: 0.3px;
+}
+
+/* Department-Specific Node Header Gradients */
+.org-chart-node[data-department*="engineering"] .node-header,
+.org-chart-node[data-department*="product"] .node-header,
+.org-chart-node[data-department*="tech"] .node-header,
+.org-chart-node[data-department*="development"] .node-header {
+    background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+    border-bottom-color: #60a5fa;
+}
+
+.org-chart-node[data-department*="sales"] .node-header,
+.org-chart-node[data-department*="revenue"] .node-header,
+.org-chart-node[data-department*="business"] .node-header {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border-bottom-color: #34d399;
+}
+
+.org-chart-node[data-department*="marketing"] .node-header,
+.org-chart-node[data-department*="brand"] .node-header {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    border-bottom-color: #fbbf24;
+}
+
+.org-chart-node[data-department*="operations"] .node-header,
+.org-chart-node[data-department*="ops"] .node-header {
+    background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+    border-bottom-color: #a78bfa;
+}
+
+.org-chart-node[data-department*="finance"] .node-header,
+.org-chart-node[data-department*="accounting"] .node-header {
+    background: linear-gradient(135deg, #06b6d4 0%, #0e7490 100%);
+    border-bottom-color: #22d3ee;
+}
+
+.org-chart-node[data-department*="hr"] .node-header,
+.org-chart-node[data-department*="people"] .node-header,
+.org-chart-node[data-department*="human"] .node-header {
+    background: linear-gradient(135deg, #ec4899 0%, #be185d 100%);
+    border-bottom-color: #f472b6;
 }
 
 .org-chart-node .node-body {
@@ -159,40 +200,53 @@
             let rolesHTML = '';
 
             node.members.forEach(roleGroup => {
-                const roleTitle = escapeHtml(roleGroup.roleLabel || 'Team Members');
+                const roleTitle = roleGroup.roleLabel ? escapeHtml(roleGroup.roleLabel) : '';
                 const people = roleGroup.entries || [];
 
-                const peopleHTML = people.map(person => {
-                    const escapedName = escapeHtml(person.name || 'Unnamed');
-                    return `
+                // Skip empty names, render non-empty names
+                const peopleHTML = people
+                    .filter(person => person.name && person.name.trim())
+                    .map(person => {
+                        const escapedName = escapeHtml(person.name);
+                        return `
                         <div class="person-row">
                             <div class="person-name">${escapedName}</div>
                         </div>
                     `;
-                }).join('');
+                    }).join('');
+
+                // Only render role-title div if title is non-empty
+                const roleTitleHTML = roleTitle ? `<div class="role-title">${roleTitle}</div>` : '';
 
                 rolesHTML += `
                     <div class="role-section">
-                        <div class="role-title">${roleTitle}</div>
+                        ${roleTitleHTML}
                         <div class="people-list">${peopleHTML}</div>
                     </div>
                 `;
             });
 
-            const calculatedHeight = calculateNodeHeight(node);
+            // Use measured height if available (from export two-pass layout), otherwise estimate
+            const effectiveHeight = node.__measuredHeight || height || calculateNodeHeight(node);
             const department = node.meta?.department || node.department || '';
             const headerText = department ? escapeHtml(department) : '';
+            const departmentLower = department.toLowerCase();
+
+            // Use fixed height when measured to ensure layout alignment
+            const heightStyle = node.__measuredHeight
+                ? `height: ${effectiveHeight}px;`
+                : `min-height: ${effectiveHeight}px; height: auto;`;
 
             return `
-                <div class="org-chart-node multi-person" style="width: ${width}px; min-height: ${calculatedHeight}px; height: auto;">
+                <div class="org-chart-node multi-person" data-department="${escapeHtml(departmentLower)}" style="width: ${width}px; ${heightStyle}">
                     <div class="node-header">${headerText}</div>
                     <div class="node-body">${rolesHTML}</div>
                 </div>
             `;
         }
 
-        const escapedName = escapeHtml(node.name || 'Unnamed');
-        const escapedTitle = escapeHtml(node.title || 'No Title');
+        const escapedName = node.name ? escapeHtml(node.name) : '';
+        const escapedTitle = node.title ? escapeHtml(node.title) : '';
         const escapedDept = node.department ? escapeHtml(node.department) : '';
 
         return `

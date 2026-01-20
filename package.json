@@ -30,11 +30,15 @@
   },
   "scripts": {
     "start": "nodemon ",
+    "dev:swa": "swa start app --api-location api",
+    "build:lib": "rm -rf build && mkdir build && rollup -g d3-selection:d3,d3-array:d3,d3-hierarchy:d3,d3-zoom:d3,d3-flextree:d3,d3-shape:d3,d3-group:d3  -f umd -n d3 -o build/d3-org-chart.js -- index.js",
+    "build:app": "npm run build:lib && cp build/d3-org-chart.js app/js/d3-org-chart.js",
+    "build": "npm run build:app",
     "_pretest": "rm -rf build && mkdir build && rollup -c --banner \"$(preamble)\"",
     "_test": "tape 'test/**/*-test.js'",
     "_prepublish": "npm run test && uglifyjs build/d3-org-chart.js -c -m -o build/d3-org-chart.min.js",
     "_postpublish": "zip -j build/d3-org-chart.zip -- LICENSE README.md build/d3-org-chart.js build/d3-org-chart.min.js",
-    "pretest": "rm -rf build && mkdir build && rollup -g d3-selection:d3,d3-array:d3,d3-hierarchy:d3,d3-zoom:d3,d3-flextree:d3,d3-shape:d3,d3-group:d3  -f umd -n d3 -o build/d3-org-chart.js -- index.js",
+    "pretest": "npm run build:lib",
     "test": "tape 'test/**/*-test.js'",
     "prepublish": "npm run test && uglifyjs build/d3-org-chart.js -c -m -o build/d3-org-chart.min.js",
     "postpublish": "zip -j build/d3-org-chart.zip -- LICENSE README.md build/d3-org-chart.js build/d3-org-chart.min.js"
@@ -43,17 +47,21 @@
     "@babel/core": "^7.7.7",
     "@babel/preset-env": "^7.7.7",
     "babel": "^6.23.0",
+    "nodemon": "^3.1.10",
     "package-preamble": "0.1",
     "rollup": "0.27",
     "tape": "4",
     "uglify-js": "3"
   },
   "dependencies": {
-    "d3-selection": "3",
     "d3-array": "3",
+    "d3-flextree": "2.1.2",
     "d3-hierarchy": "3",
-    "d3-zoom": "3",
+    "d3-selection": "3",
     "d3-shape": "3",
-    "d3-flextree": "2.1.2"
+    "d3-zoom": "3",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^3.0.4",
+    "svg2pdf.js": "^2.6.0"
   }
 }

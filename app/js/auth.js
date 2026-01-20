@@ -128,10 +128,33 @@
             userName.className = 'user-name';
             userName.textContent = user.userDetails; // Safe: textContent auto-escapes
 
+            const handleLogout = function() {
+                if (confirm('Are you sure you want to log out?')) {
+                    // Clear mock user from sessionStorage
+                    sessionStorage.removeItem('mockUser');
+                    sessionStorage.removeItem('welcome_shown');
+
+                    // Detect environment and use appropriate logout
+                    if (isSWAEnvironment) {
+                        // SWA CLI: use proper logout to clear SWA cookies
+                        window.apiClient?.logout();
+                    } else if (isLocalDev) {
+                        // Mock-only local dev (e.g., Python server): just reload
+                        window.location.reload();
+                    } else {
+                        // Production: use proper logout
+                        window.apiClient?.logout();
+                    }
+                }
+            };
+
+            // Expose logout for legacy handlers
+            window.logout = handleLogout;
+
             const logoutBtn = document.createElement('button');
             logoutBtn.className = 'btn btn-sm btn-outline-secondary';
             logoutBtn.textContent = 'Logout';
-            logoutBtn.onclick = logout;
+            logoutBtn.addEventListener('click', handleLogout);
 
             userDetails.appendChild(userName);
             userDetails.appendChild(logoutBtn);
@@ -139,26 +162,6 @@
             headerContent.appendChild(userInfo);
         }
 
-        // Add logout function to window
-        window.logout = function() {
-            if (confirm('Are you sure you want to log out?')) {
-                // Clear mock user from sessionStorage
-                sessionStorage.removeItem('mockUser');
-                sessionStorage.removeItem('welcome_shown');
-
-                // Detect environment and use appropriate logout
-                if (isSWAEnvironment) {
-                    // SWA CLI: use proper logout to clear SWA cookies
-                    window.apiClient.logout();
-                } else if (isLocalDev) {
-                    // Mock-only local dev (e.g., Python server): just reload
-                    window.location.reload();
-                } else {
-                    // Production: use proper logout
-                    window.apiClient.logout();
-                }
-            }
-        };
     }
 
     /**

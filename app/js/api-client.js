@@ -133,13 +133,27 @@ class APIClient {
 
     /**
      * Get all charts accessible to the user
-     * @returns {Promise<Array>} Array of chart metadata
+     * @param {Object} params - Query parameters (limit, offset, sortBy, sortOrder, includeData)
+     * @returns {Promise<Object>} Response with charts array and pagination info
      */
-    async getCharts() {
-        const response = await this._request('/charts', {
+    async getCharts(params = {}) {
+        // Build query string from params (limit, offset, sortBy, sortOrder)
+        const queryParams = new URLSearchParams();
+        if (params.limit) queryParams.set('limit', params.limit);
+        if (params.offset !== undefined) queryParams.set('offset', params.offset);
+        if (params.sortBy) queryParams.set('sortBy', params.sortBy);
+        if (params.sortOrder) queryParams.set('sortOrder', params.sortOrder);
+        if (params.includeData !== undefined) queryParams.set('includeData', params.includeData ? 'true' : 'false');
+
+        const queryString = queryParams.toString();
+        const url = queryString ? `/charts?${queryString}` : '/charts';
+
+        const response = await this._request(url, {
             method: 'GET'
         });
-        return response.charts || [];
+
+        // Return full response with pagination info
+        return response;
     }
 
     /**
@@ -227,6 +241,70 @@ class APIClient {
                 targetUserId: targetUserId
             })
         });
+    }
+
+    /**
+     * Get existing shareable link for a chart (no creation side effects)
+     * @param {string} chartId - The chart ID
+     * @returns {Promise<object>} Share link info (token, url, createdAt, etc.) or throws 404
+     */
+    async getShareLink(chartId) {
+        return await this._request(`/charts/${chartId}/share-link`, {
+            method: 'GET'
+        });
+    }
+
+    /**
+     * Create or get shareable link for a chart
+     * @param {string} chartId - The chart ID
+     * @param {boolean} regenerate - Force regenerate new token
+     * @returns {Promise<object>} Share link info (token, url, createdAt, etc.)
+     */
+    async createShareLink(chartId, regenerate = false) {
+        const queryParam = regenerate ? '?regenerate=true' : '';
+        return await this._request(`/charts/${chartId}/share-link${queryParam}`, {
+            method: 'POST'
+        });
+    }
+
+    /**
+     * Revoke shareable link for a chart
+     * @param {string} chartId - The chart ID
+     * @returns {Promise<object>} Revoke result
+     */
+    async revokeShareLink(chartId) {
+        return await this._request(`/charts/${chartId}/share-link`, {
+            method: 'DELETE'
+        });
+    }
+
+    /**
+     * Get chart data via shareable link (anonymous access)
+     * @param {string} token - The share link token
+     * @returns {Promise<object>} Chart data
+     */
+    async getSharedChart(token) {
+        const url = `/api/v1/shared/${token}`;  // Full path (not using API_BASE_URL prefix)
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        // Don't redirect to login on 401 (anonymous access)
+        if (response.status === 404 || response.status === 403) {
+            const data = await response.json();
+            throw new Error(data.error || 'Unable to access this chart');
+        }
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || `HTTP ${response.status}`);
+        }
+
+        return await response.json();
     }
 
     /**

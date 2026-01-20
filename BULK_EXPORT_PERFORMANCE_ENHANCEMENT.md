@@ -1,18 +1,20 @@
 # Bulk Export Performance Enhancement
 
 **Date:** 2025-12-23
-**Priority:** LOW (Future Enhancement)
-**Status:** Documented - Not Yet Implemented
+**Priority:** Completed
+**Status:** Implemented - includeData supported; per-chart fallback retained
 
 ---
 
 ## Executive Summary
 
-Current bulk export implementation uses N+1 query pattern that could hit rate limits and cause slow exports for users with large chart counts. Backend optimization recommended.
+Bulk export now requests includeData to avoid N+1 calls when supported, and falls back to per-chart fetches for compatibility.
 
 ---
 
 ## Current Implementation (As of Round 3)
+
+Note: includeData support is now implemented; the N+1 flow below is retained only as a fallback and for historical context.
 
 ### How It Works Now
 
@@ -528,9 +530,9 @@ const limits = {
 
 ## Conclusion
 
-**Current Status:** Bulk export works correctly but uses N+1 pattern that can hit rate limits with large exports.
+**Current Status:** Bulk export requests includeData to avoid N+1 calls; per-chart fetch remains as fallback for older backends.
 
-**Recommended Fix:** Add `?includeData=true` parameter to GET /charts endpoint (Option 1).
+**Implemented Fix:** Added `?includeData=true` parameter to GET /charts endpoint (Option 1).
 
 **Priority:** LOW - Current implementation works for most users (< 100 charts). Only becomes an issue at scale.
 

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>List All Charts</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            max-width: 1200px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f8fafc;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #1e293b;
+            margin-bottom: 30px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        th {
+            background: #f8fafc;
+            font-weight: 600;
+            color: #475569;
+        }
+        tr:hover {
+            background: #f8fafc;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #64748b;
+        }
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            background: #dbeafe;
+            color: #1e40af;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 All Charts in System</h1>
+        <div id="error" class="error" style="display: none;"></div>
+        <div id="loading" class="loading">Loading charts...</div>
+        <div id="charts" style="display: none;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Chart Name</th>
+                        <th>Department/Tag</th>
+                        <th>Nodes</th>
+                        <th>Chart ID</th>
+                    </tr>
+                </thead>
+                <tbody id="chartList">
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script src="js/api-client.js"></script>
+    <script src="js/cloud-storage.js"></script>
+
+    <script>
+        async function listCharts() {
+            const loadingDiv = document.getElementById('loading');
+            const chartsDiv = document.getElementById('charts');
+            const chartList = document.getElementById('chartList');
+            const errorDiv = document.getElementById('error');
+
+            try {
+                let charts = [];
+
+                // Try API client first
+                if (window.apiClient && typeof window.apiClient.getCharts === 'function') {
+                    console.log('Fetching from API...');
+                    let allCharts = [];
+                    let offset = 0;
+                    let hasMore = true;
+                    const limit = 100;
+
+                    while (hasMore) {
+                        const response = await window.apiClient.getCharts({ limit, offset, includeData: true });
+                        const chartList = Array.isArray(response) ? response : (response?.charts || []);
+                        allCharts = allCharts.concat(chartList);
+
+                        if (response.pagination) {
+                            hasMore = response.pagination.hasMore;
+                            offset += limit;
+                        } else {
+                            hasMore = false;
+                        }
+                    }
+
+                    charts = allCharts.map(chart => ({
+                        id: chart.id,
+                        name: chart.name || chart.data?.chartName || 'Untitled',
+                        department: chart.data?.departmentTag || '',
+                        nodes: chart.data?.nodes?.length || 0
+                    }));
+                }
+                // Fallback to localStorage
+                else if (window.cloudStorage && typeof window.cloudStorage.getChartsArray === 'function') {
+                    console.log('Fetching from localStorage...');
+                    const localCharts = window.cloudStorage.getChartsArray();
+                    charts = localCharts.map(chart => ({
+                        id: chart.chartId,
+                        name: chart.chartName || 'Untitled',
+                        department: chart.departmentTag || '',
+                        nodes: chart.nodes?.length || 0
+                    }));
+                }
+
+                if (charts.length === 0) {
+                    throw new Error('No charts found in system');
+                }
+
+                // Display charts
+                loadingDiv.style.display = 'none';
+                chartsDiv.style.display = 'block';
+
+                charts.forEach((chart, index) => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${index + 1}</td>
+                        <td><strong>${escapeHtml(chart.name)}</strong></td>
+                        <td>${chart.department ? `<span class="badge">${escapeHtml(chart.department)}</span>` : '<em>No department</em>'}</td>
+                        <td>${chart.nodes}</td>
+                        <td><code style="font-size: 11px; color: #64748b;">${escapeHtml(chart.id)}</code></td>
+                    `;
+                    chartList.appendChild(row);
+                });
+
+                // Also log to console in a format easy to copy
+                console.log('\n=== CHARTS FOR MAPPING ===\n');
+                charts.forEach((chart, index) => {
+                    console.log(`${index + 1}. "${chart.name}" → Department: "${chart.department}" → Slide: ???`);
+                });
+                console.log('\n========================\n');
+
+            } catch (error) {
+                console.error('Error fetching charts:', error);
+                loadingDiv.style.display = 'none';
+                errorDiv.style.display = 'block';
+                errorDiv.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Load charts when page loads
+        window.addEventListener('load', listCharts);
+    </script>
+</body>
+</html>

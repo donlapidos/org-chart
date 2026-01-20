@@ -136,12 +136,55 @@ class ChartEditor {
         this.ensureToastSystem();
         // Get chart ID from URL
         const urlParams = new URLSearchParams(window.location.search);
-        this.chartId = urlParams.get('id');
+        const chartId = urlParams.get('id');
 
-        if (!this.chartId) {
+        if (!chartId) {
+            let cachedId = null;
+            try {
+                cachedId = sessionStorage.getItem('lastChartId');
+            } catch (error) {
+                cachedId = null;
+            }
+
+            if (cachedId) {
+                let recoveryAttempted = false;
+                try {
+                    recoveryAttempted = sessionStorage.getItem('chartIdRecoveryAttempted') === 'true';
+                } catch (error) {
+                    recoveryAttempted = false;
+                }
+
+                if (!recoveryAttempted) {
+                    try {
+                        sessionStorage.setItem('chartIdRecoveryAttempted', 'true');
+                    } catch (error) {
+                        // Ignore storage errors
+                    }
+
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('id', cachedId);
+                    window.location.replace(url.toString());
+                    return;
+                }
+            }
+
+            try {
+                sessionStorage.removeItem('chartIdRecoveryAttempted');
+            } catch (error) {
+                // Ignore storage errors
+            }
+
             window.toast.error('No chart ID provided');
             window.location.href = 'index.html';
             return;
+        }
+
+        this.chartId = chartId;
+        try {
+            sessionStorage.setItem('lastChartId', this.chartId);
+            sessionStorage.removeItem('chartIdRecoveryAttempted');
+        } catch (error) {
+            // Ignore storage errors
         }
 
         // Load chart data from API
@@ -922,92 +965,428 @@ class ChartEditor {
     }
 
     /**
+     * Analyze chart structure to determine optimal canvas size
+     * Returns { depth, maxBreadth, totalNodes, layoutParams, canvasSize }
+     */
+    analyzeChartStructure(nodes) {
+        if (!nodes || nodes.length === 0) {
+            return {
+                depth: 1,
+                maxBreadth: 1,
+                totalNodes: 0,
+                layoutParams: {
+                    nodeWidth: 250,
+                    childrenMargin: 80,
+                    compactMarginBetween: 25,
+                    compactMarginPair: 100
+                },
+                canvasSize: { width: 2000, height: 1500 }
+            };
+        }
+
+        // Build parent-child relationships
+        const nodeMap = new Map();
+        nodes.forEach(node => nodeMap.set(node.id, node));
+
+        // Assign levels via BFS
+        const queue = [];
+        const visited = new Set();
+        const levelCounts = new Map();
+
+        const rootNodes = nodes.filter(n => !n.parentId || !nodeMap.has(n.parentId));
+        rootNodes.forEach(root => {
+            queue.push({ nodeId: root.id, level: 0 });
+            visited.add(root.id);
+        });
+
+        let maxDepth = 0;
+        while (queue.length > 0) {
+            const { nodeId, level } = queue.shift();
+            maxDepth = Math.max(maxDepth, level);
+            levelCounts.set(level, (levelCounts.get(level) || 0) + 1);
+
+            const children = nodes.filter(n => n.parentId === nodeId && !visited.has(n.id));
+            children.forEach(child => {
+                queue.push({ nodeId: child.id, level: level + 1 });
+                visited.add(child.id);
+            });
+        }
+
+        const depth = maxDepth + 1;
+        const maxBreadth = Math.max(...Array.from(levelCounts.values()), 1);
+        const totalNodes = nodes.length;
+
+        // Fixed layout parameters matching the editor (lines 448-455) for consistency
+        // Ensures single-chart exports have the same spacing as the editor and bulk exports
+        const nodeWidth = 250;
+        const childrenMargin = 80;
+        const compactMarginBetween = 25;
+        const compactMarginPair = 100;
+
+        // Calculate dynamic canvas size
+        const baseCaptureWidth = 2000;
+        const baseCaptureHeight = 1128;
+
+        // Estimate dimensions based on structure
+        const estimatedWidth = maxBreadth * (nodeWidth + compactMarginBetween) + 400;
+        const avgNodeHeight = 120;
+        const estimatedHeight = depth * (avgNodeHeight + childrenMargin) + 300;
+
+        const captureWidth = Math.min(Math.max(baseCaptureWidth, estimatedWidth), 4500);
+        const captureHeight = Math.min(Math.max(baseCaptureHeight, estimatedHeight), 3500);
+
+        return {
+            depth,
+            maxBreadth,
+            totalNodes,
+            layoutParams: {
+                nodeWidth,
+                childrenMargin,
+                compactMarginBetween,
+                compactMarginPair
+            },
+            canvasSize: { width: captureWidth, height: captureHeight }
+        };
+    }
+
+    /**
+     * Get resolved CSS variables (same as bulk export)
+     */
+    getResolvedCSSVariables() {
+        const tempDiv = document.createElement('div');
+        tempDiv.style.cssText = 'position: absolute; visibility: hidden;';
+        document.body.appendChild(tempDiv);
+
+        const computedStyle = getComputedStyle(tempDiv);
+
+        const variables = {
+            // Standard UI variables
+            '--primary-color': computedStyle.getPropertyValue('--primary-color') || '#2563eb',
+            '--primary-hover': computedStyle.getPropertyValue('--primary-hover') || '#1d4ed8',
+            '--secondary-color': computedStyle.getPropertyValue('--secondary-color') || '#64748b',
+            '--success-color': computedStyle.getPropertyValue('--success-color') || '#10b981',
+            '--danger-color': computedStyle.getPropertyValue('--danger-color') || '#ef4444',
+            '--warning-color': computedStyle.getPropertyValue('--warning-color') || '#f59e0b',
+            '--background': computedStyle.getPropertyValue('--background') || '#ffffff',
+            '--background-secondary': computedStyle.getPropertyValue('--background-secondary') || '#f8fafc',
+            '--border-color': computedStyle.getPropertyValue('--border-color') || '#e2e8f0',
+            '--text-primary': computedStyle.getPropertyValue('--text-primary') || '#1e293b',
+            '--text-secondary': computedStyle.getPropertyValue('--text-secondary') || '#64748b',
+            '--shadow-sm': computedStyle.getPropertyValue('--shadow-sm') || '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+            '--shadow-md': computedStyle.getPropertyValue('--shadow-md') || '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+            '--shadow-lg': computedStyle.getPropertyValue('--shadow-lg') || '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+            '--radius': computedStyle.getPropertyValue('--radius') || '8px',
+            '--radius-sm': computedStyle.getPropertyValue('--radius-sm') || '4px',
+            '--radius-lg': computedStyle.getPropertyValue('--radius-lg') || '12px',
+            // RRC Brand Colors
+            '--rrc-blue': computedStyle.getPropertyValue('--rrc-blue') || '#0085f2',
+            '--rrc-blue-light': computedStyle.getPropertyValue('--rrc-blue-light') || '#D3ECFE',
+            '--rrc-blue-lighter': computedStyle.getPropertyValue('--rrc-blue-lighter') || '#e6f5ff',
+            '--rrc-blue-dark': computedStyle.getPropertyValue('--rrc-blue-dark') || '#0066bd',
+            '--rrc-blue-darker': computedStyle.getPropertyValue('--rrc-blue-darker') || '#004d8f',
+            '--rrc-orange': computedStyle.getPropertyValue('--rrc-orange') || '#ff6900',
+            '--rrc-orange-alt': computedStyle.getPropertyValue('--rrc-orange-alt') || '#fe6c19',
+            '--rrc-orange-light': computedStyle.getPropertyValue('--rrc-orange-light') || '#FFF1E8',
+            '--rrc-orange-lighter': computedStyle.getPropertyValue('--rrc-orange-lighter') || '#fff8f3',
+            '--rrc-orange-dark': computedStyle.getPropertyValue('--rrc-orange-dark') || '#cc5400',
+            '--rrc-green-light': computedStyle.getPropertyValue('--rrc-green-light') || '#7ed957',
+            '--rrc-green': computedStyle.getPropertyValue('--rrc-green') || '#4caf50',
+            '--rrc-green-dark': computedStyle.getPropertyValue('--rrc-green-dark') || '#2e7d32',
+            '--rrc-neutral-dark': computedStyle.getPropertyValue('--rrc-neutral-dark') || '#303030',
+            '--rrc-neutral-light': computedStyle.getPropertyValue('--rrc-neutral-light') || '#abb8c3',
+            '--rrc-neutral-lighter': computedStyle.getPropertyValue('--rrc-neutral-lighter') || '#e5e9ec'
+        };
+
+        document.body.removeChild(tempDiv);
+        return variables;
+    }
+
+    /**
+     * Resolve CSS variables in stylesheet
+     */
+    resolveCSSVariables(cssText, variables) {
+        let resolved = cssText;
+        for (const [varName, value] of Object.entries(variables)) {
+            const regex = new RegExp(`var\\(${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g');
+            resolved = resolved.replace(regex, value.trim());
+        }
+        return resolved;
+    }
+
+    /**
+     * Inject node styles into SVG (same as bulk export)
+     */
+    injectNodeStyles(svgNode, resolvedCSS) {
+        if (!svgNode) return;
+        try {
+            const styleId = 'export-node-styles';
+            if (svgNode.querySelector(`#${styleId}`)) {
+                return;
+            }
+            const styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+            styleEl.id = styleId;
+            styleEl.textContent = resolvedCSS;
+            svgNode.insertBefore(styleEl, svgNode.firstChild);
+        } catch (error) {
+            console.warn('Failed to inject node styles into SVG', error);
+        }
+    }
+
+    /**
+     * Render chart off-screen with injected styles for consistent exports
+     * Uses dynamic canvas sizing based on chart complexity to prevent over-compression
+     * @param {number} scale - Export scale factor (1.0 = base, 2.0 = high quality)
+     * @returns {Promise<string>} Base64 data URL of the rendered chart
+     */
+    async renderChartOffScreen(scale = 2.0) {
+        // Fetch and combine stylesheets
+        const [baseResponse, modernResponse] = await Promise.all([
+            fetch('css/styles.css'),
+            fetch('css/modernization-styles.css')
+        ]);
+
+        const baseCSS = await baseResponse.text();
+        const modernCSS = modernResponse.ok ? await modernResponse.text() : '';
+        const combinedCSS = `${baseCSS}\n\n/* Modernization Styles */\n${modernCSS}`;
+
+        // Resolve CSS variables for SVG injection
+        const cssVariables = this.getResolvedCSSVariables();
+        const resolvedCSS = this.resolveCSSVariables(combinedCSS, cssVariables);
+
+        // Analyze chart structure for dynamic canvas sizing
+        const analysis = this.analyzeChartStructure(this.chartData.nodes || []);
+        const captureWidth = analysis.canvasSize.width;
+        const captureHeight = analysis.canvasSize.height;
+
+        console.log(`[Export] Chart analysis: ${analysis.totalNodes} nodes, depth=${analysis.depth}, breadth=${analysis.maxBreadth}`);
+        console.log(`[Export] Canvas size: ${captureWidth}×${captureHeight}px (prevents fit() compression)`);
+
+        // Create hidden container
+        const container = document.createElement('div');
+        container.id = 'temp-export-container';
+        container.style.cssText = `
+            position: fixed;
+            left: -9999px;
+            top: -9999px;
+            width: ${captureWidth}px;
+            height: ${captureHeight}px;
+            overflow: hidden;
+            visibility: hidden;
+            pointer-events: none;
+        `;
+
+        // Inject styles
+        const styleTag = document.createElement('style');
+        styleTag.textContent = combinedCSS;
+        container.appendChild(styleTag);
+
+        const canvasDiv = document.createElement('div');
+        canvasDiv.id = 'temp-chart-canvas';
+        canvasDiv.style.cssText = `width: ${captureWidth}px; height: ${captureHeight}px;`;
+        container.appendChild(canvasDiv);
+        document.body.appendChild(container);
+
+        try {
+            // Prepare chart data
+            const chartNodes = this.chartData.nodes.map(node => ({
+                id: node.id,
+                parentId: node.parentId || '',
+                members: node.members || [],
+                meta: node.meta || {},
+                _expanded: true,
+                name: node.name,
+                title: node.title,
+                department: node.department || (node.meta && node.meta.department)
+            }));
+
+            // Use fixed layout parameters from analysis (matching editor)
+            const params = analysis.layoutParams;
+
+            // Render chart off-screen
+            const tempChart = new d3.OrgChart()
+                .container('#temp-chart-canvas')
+                .data(chartNodes)
+                .svgWidth(captureWidth)
+                .svgHeight(captureHeight)
+                .nodeWidth(() => params.nodeWidth)
+                .nodeHeight((d) => OrgNodeRenderer.calculateNodeHeight(d.data || d))
+                .childrenMargin(() => params.childrenMargin)
+                .compactMarginBetween(() => params.compactMarginBetween)
+                .compactMarginPair(() => params.compactMarginPair)
+                .compact(false)
+                .layout(this.chartData.layout || 'top')
+                .nodeContent((d) => OrgNodeRenderer.renderNodeContent(d))
+                .render();
+
+            // Wait for render to complete
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // Fit chart to view (non-animated but still async)
+            // CRITICAL: Even with animate:false, fit uses async transitions
+            // Must wait for onCompleted callback before exporting
+            await new Promise(resolve => {
+                tempChart.fit({ animate: false, onCompleted: resolve });
+            });
+            console.log('[Export] fit() completed, transforms applied');
+
+            // Optional: wait one more frame for safety
+            await new Promise(resolve => requestAnimationFrame(resolve));
+
+            // Inject resolved CSS into SVG before export (critical for styling)
+            const svgNode = canvasDiv.querySelector('svg');
+            if (svgNode) {
+                this.injectNodeStyles(svgNode, resolvedCSS);
+                console.log('[Export] Injected resolved CSS variables into SVG');
+            }
+
+            // Capture as image
+            // Use full: false since we already called fit() manually above
+            return new Promise((resolve, reject) => {
+                tempChart.exportImg({
+                    full: false,
+                    save: false,
+                    scale: scale,
+                    onLoad: (base64) => {
+                        tempChart.clear();
+                        container.remove();
+                        resolve(base64);
+                    }
+                });
+            });
+        } catch (error) {
+            container.remove();
+            throw error;
+        }
+    }
+
+    /**
      * Export as PNG
      */
-    exportPNG() {
-        this.orgChart.exportImg({
-            full: true,
-            save: true
-        });
+    async exportPNG() {
+        try {
+            const base64 = await this.renderChartOffScreen(2.0);
+            const a = document.createElement('a');
+            a.href = base64;
+            a.download = `${this.chartData.chartName || 'org-chart'}.png`;
+            a.click();
+        } catch (error) {
+            console.error('PNG export failed:', error);
+            window.toast.error('Failed to export PNG');
+        }
     }
 
     /**
      * Export as JPEG
      */
-    exportJPEG() {
-        this.orgChart.exportImg({
-            full: true,
-            save: false,
-            onLoad: (base64) => {
-                // Convert PNG to JPEG
-                const img = new Image();
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
+    async exportJPEG() {
+        try {
+            const base64 = await this.renderChartOffScreen(2.0);
 
-                    // Fill white background for JPEG
-                    ctx.fillStyle = '#FFFFFF';
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // Convert PNG to JPEG
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
 
-                    // Draw image
-                    ctx.drawImage(img, 0, 0);
+                // Fill white background for JPEG
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                    // Convert to JPEG and download
-                    canvas.toBlob((blob) => {
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `${this.chartData.chartName || 'org-chart'}.jpg`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                    }, 'image/jpeg', 0.95);
-                };
-                img.src = base64;
-            }
-        });
+                // Draw image
+                ctx.drawImage(img, 0, 0);
+
+                // Convert to JPEG and download
+                canvas.toBlob((blob) => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${this.chartData.chartName || 'org-chart'}.jpg`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }, 'image/jpeg', 0.95);
+            };
+            img.src = base64;
+        } catch (error) {
+            console.error('JPEG export failed:', error);
+            window.toast.error('Failed to export JPEG');
+        }
     }
 
     /**
-     * Export as PDF
+     * Export as PDF with auto page sizing for readability
      */
-    exportPDF() {
-        const self = this;
+    async exportPDF() {
+        try {
+            const base64 = await this.renderChartOffScreen(2.0);
+            const { jsPDF } = window.jspdf;
+            const img = new Image();
 
-        this.orgChart.exportImg({
-            full: true,
-            save: false,
-            onLoad: (base64) => {
-                const { jsPDF } = window.jspdf;
-                const img = new Image();
+            img.onload = () => {
+                const imgWidth = img.width;
+                const imgHeight = img.height;
 
-                img.onload = function() {
-                    const imgWidth = img.width;
-                    const imgHeight = img.height;
+                // Default page dimensions (A4 landscape) in mm
+                const defaultPageWidth = 297;
+                const defaultPageHeight = 210;
 
-                    // Calculate PDF page dimensions (A4 landscape)
-                    const pdfWidth = 297; // A4 landscape width in mm
-                    const pdfHeight = 210; // A4 landscape height in mm
+                // Minimum scale to maintain text readability (0.8 = 80% of original size)
+                const MIN_SCALE = 0.8;
 
-                    // Calculate scaling
-                    const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
-                    const scaledWidth = imgWidth * ratio;
-                    const scaledHeight = imgHeight * ratio;
-
-                    // Center image on page
-                    const x = (pdfWidth - scaledWidth) / 2;
-                    const y = (pdfHeight - scaledHeight) / 2;
-
-                    // Create PDF
-                    const pdf = new jsPDF('l', 'mm', 'a4');
-                    pdf.addImage(img, 'PNG', x, y, scaledWidth, scaledHeight);
-                    pdf.save(`${self.chartData.chartName || 'org-chart'}.pdf`);
+                // Reasonable margins in mm
+                const margins = {
+                    left: 10,
+                    right: 10,
+                    top: 15,
+                    bottom: 15
                 };
 
-                img.src = base64;
-            }
-        });
+                // Available space on default page
+                const availableWidth = defaultPageWidth - margins.left - margins.right;
+                const availableHeight = defaultPageHeight - margins.top - margins.bottom;
+
+                // Calculate scale to fit image on default page
+                const scaleX = availableWidth / (imgWidth * 0.264583); // Convert px to mm (1px = 0.264583mm at 96dpi)
+                const scaleY = availableHeight / (imgHeight * 0.264583);
+                let scale = Math.min(scaleX, scaleY);
+
+                let pdfWidth = defaultPageWidth;
+                let pdfHeight = defaultPageHeight;
+
+                // If scale is too small, grow the page to maintain minimum readable scale
+                if (scale < MIN_SCALE) {
+                    scale = MIN_SCALE;
+                    const scaledWidthMm = imgWidth * 0.264583 * scale;
+                    const scaledHeightMm = imgHeight * 0.264583 * scale;
+                    pdfWidth = scaledWidthMm + margins.left + margins.right;
+                    pdfHeight = scaledHeightMm + margins.top + margins.bottom;
+                    console.log(`[Export] Scale too small, increasing page from ${defaultPageWidth}×${defaultPageHeight}mm to ${Math.round(pdfWidth)}×${Math.round(pdfHeight)}mm (scale: ${scale.toFixed(2)})`);
+                }
+
+                // Calculate final dimensions and position
+                const scaledWidth = imgWidth * 0.264583 * scale;
+                const scaledHeight = imgHeight * 0.264583 * scale;
+                const x = (pdfWidth - scaledWidth) / 2;
+                const y = (pdfHeight - scaledHeight) / 2;
+
+                // Create PDF with appropriate page size
+                const orientation = pdfWidth > pdfHeight ? 'l' : 'p';
+                const pdf = new jsPDF({
+                    orientation: orientation,
+                    unit: 'mm',
+                    format: [pdfWidth, pdfHeight]
+                });
+
+                pdf.addImage(img, 'PNG', x, y, scaledWidth, scaledHeight);
+                pdf.save(`${this.chartData.chartName || 'org-chart'}.pdf`);
+            };
+
+            img.src = base64;
+        } catch (error) {
+            console.error('PDF export failed:', error);
+            window.toast.error('Failed to export PDF');
+        }
     }
 
     /**
@@ -1375,7 +1754,7 @@ class ChartEditor {
 
         roleLabelInputs.forEach(input => {
             const roleIndex = parseInt(input.dataset.roleIndex);
-            const roleLabel = input.value.trim() || 'Team Members';
+            const roleLabel = input.value.trim(); // No fallback - allow blank titles
 
             // Get all person entries for this role
             const personEntries = document.querySelectorAll(`.person-entry`);
@@ -1400,7 +1779,8 @@ class ChartEditor {
                 });
             });
 
-            if (entries.length > 0) {
+            // Keep role if it has a title OR has entries (allow title-only roles)
+            if (roleLabel || entries.length > 0) {
                 members.push({ roleLabel, entries });
             }
         });

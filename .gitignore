@@ -118,5 +118,10 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
+# Azure Functions
+local.settings.json
+
+# Bootstrap documentation (contains credentials)
+BOOTSTRAP_COMPLETE.md
 
 package-lock.json

@@ -15,6 +15,9 @@ class BulkExportManager {
         this.stylesheetCache = null;
         this.cssVariablesCache = null;
 
+        // Minimum scale to maintain text readability (0.8 = 80% of original size)
+        this.MIN_EXPORT_SCALE = 0.8;
+
         // Create hidden container for rendering
         this.setupHiddenContainer();
     }
@@ -47,6 +50,7 @@ class BulkExportManager {
 
     /**
      * Fetch and cache the main stylesheet content
+     * Includes both base styles and modernization styles for consistent rendering
      * @returns {Promise<string>} The CSS content
      */
     async fetchStylesheet() {
@@ -55,14 +59,31 @@ class BulkExportManager {
         }
 
         try {
-            const response = await fetch('css/styles.css');
-            if (!response.ok) {
-                throw new Error(`Failed to fetch stylesheet: ${response.statusText}`);
+            // Fetch both base styles and modernization styles in parallel
+            const [baseResponse, modernResponse] = await Promise.all([
+                fetch('css/styles.css'),
+                fetch('css/modernization-styles.css')
+            ]);
+
+            if (!baseResponse.ok) {
+                throw new Error(`Failed to fetch styles.css: ${baseResponse.statusText}`);
             }
-            this.stylesheetCache = await response.text();
+
+            const baseCSS = await baseResponse.text();
+
+            // Modernization styles are optional - continue if not found
+            let modernCSS = '';
+            if (modernResponse.ok) {
+                modernCSS = await modernResponse.text();
+            } else {
+                console.warn('modernization-styles.css not found, using base styles only');
+            }
+
+            // Combine stylesheets (modernization styles override base if there are conflicts)
+            this.stylesheetCache = `${baseCSS}\n\n/* Modernization Styles */\n${modernCSS}`;
             return this.stylesheetCache;
         } catch (error) {
-            console.warn('Failed to fetch styles.css, using fallback styles', error);
+            console.warn('Failed to fetch stylesheets, using fallback styles', error);
             return '';
         }
     }
@@ -83,8 +104,9 @@ class BulkExportManager {
 
         const computedStyle = getComputedStyle(tempDiv);
 
-        // Extract common CSS variables from :root
+        // Extract ALL CSS variables from :root (including RRC brand colors)
         const variables = {
+            // Standard UI variables
             '--primary-color': computedStyle.getPropertyValue('--primary-color') || '#2563eb',
             '--primary-hover': computedStyle.getPropertyValue('--primary-hover') || '#1d4ed8',
             '--secondary-color': computedStyle.getPropertyValue('--secondary-color') || '#64748b',
@@ -101,7 +123,30 @@ class BulkExportManager {
             '--shadow-lg': computedStyle.getPropertyValue('--shadow-lg') || '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
             '--radius': computedStyle.getPropertyValue('--radius') || '8px',
             '--radius-sm': computedStyle.getPropertyValue('--radius-sm') || '4px',
-            '--radius-lg': computedStyle.getPropertyValue('--radius-lg') || '12px'
+            '--radius-lg': computedStyle.getPropertyValue('--radius-lg') || '12px',
+
+            // Primary/Accent color scale - CRITICAL for node header gradients
+            '--primary-500': computedStyle.getPropertyValue('--primary-500') || '#0085f2',
+            '--primary-700': computedStyle.getPropertyValue('--primary-700') || '#0066bd',
+            '--accent-500': computedStyle.getPropertyValue('--accent-500') || '#ff6900',
+
+            // RRC Brand Colors - critical for node styling
+            '--rrc-blue': computedStyle.getPropertyValue('--rrc-blue') || '#0085f2',
+            '--rrc-blue-light': computedStyle.getPropertyValue('--rrc-blue-light') || '#D3ECFE',
+            '--rrc-blue-lighter': computedStyle.getPropertyValue('--rrc-blue-lighter') || '#e6f5ff',
+            '--rrc-blue-dark': computedStyle.getPropertyValue('--rrc-blue-dark') || '#0066bd',
+            '--rrc-blue-darker': computedStyle.getPropertyValue('--rrc-blue-darker') || '#004d8f',
+            '--rrc-orange': computedStyle.getPropertyValue('--rrc-orange') || '#ff6900',
+            '--rrc-orange-alt': computedStyle.getPropertyValue('--rrc-orange-alt') || '#fe6c19',
+            '--rrc-orange-light': computedStyle.getPropertyValue('--rrc-orange-light') || '#FFF1E8',
+            '--rrc-orange-lighter': computedStyle.getPropertyValue('--rrc-orange-lighter') || '#fff8f3',
+            '--rrc-orange-dark': computedStyle.getPropertyValue('--rrc-orange-dark') || '#cc5400',
+            '--rrc-green-light': computedStyle.getPropertyValue('--rrc-green-light') || '#7ed957',
+            '--rrc-green': computedStyle.getPropertyValue('--rrc-green') || '#4caf50',
+            '--rrc-green-dark': computedStyle.getPropertyValue('--rrc-green-dark') || '#2e7d32',
+            '--rrc-neutral-dark': computedStyle.getPropertyValue('--rrc-neutral-dark') || '#303030',
+            '--rrc-neutral-light': computedStyle.getPropertyValue('--rrc-neutral-light') || '#abb8c3',
+            '--rrc-neutral-lighter': computedStyle.getPropertyValue('--rrc-neutral-lighter') || '#e5e9ec'
         };
 
         document.body.removeChild(tempDiv);
@@ -149,10 +194,12 @@ class BulkExportManager {
         }
 
         // Quality to scale mapping (lower scale = smaller file size)
+        // PNG format preserves line fidelity; scale 1.5 keeps images under jsPDF string limit
         const qualitySettings = {
-            'low': { scale: 1.0, compression: 0.7 },      // ~1-2 MB per chart
-            'medium': { scale: 1.5, compression: 0.8 },   // ~3-5 MB per chart
-            'high': { scale: 2.0, compression: 0.9 }      // ~8-12 MB per chart
+            'low': { scale: 1.0, compression: 0.75, format: 'PNG' },     // ~1-2 MB per chart, draft quality
+            'medium': { scale: 1.5, compression: 0.95, format: 'PNG' },  // ~2-4 MB per chart, good fidelity
+            'high': { scale: 2.0, compression: 0.95, format: 'PNG' },    // ~5-8 MB per chart, high fidelity
+            'print': { scale: 2.5, compression: 0.98, format: 'PNG' }    // ~10-15 MB per chart, print-ready quality
         };
 
         this.exportQuality = qualitySettings[quality] || qualitySettings.medium;
@@ -176,6 +223,22 @@ class BulkExportManager {
 
             this.totalCharts = charts.length;
             this.updateProgress(`Found ${charts.length} charts`, 0);
+
+            // Guard: large exports + PNG can exceed JS string limits in jsPDF
+            const LARGE_EXPORT_THRESHOLD = 30;
+            if (charts.length >= LARGE_EXPORT_THRESHOLD && this.exportQuality.format === 'PNG') {
+                const previousQuality = { ...this.exportQuality };
+                this.exportQuality = {
+                    ...this.exportQuality,
+                    format: 'JPEG',
+                    compression: Math.min(this.exportQuality.compression, 0.9),
+                    scale: Math.min(this.exportQuality.scale, 1.5)
+                };
+                console.warn(`[Export] Large export (${charts.length} charts). Switching from ${previousQuality.format} to JPEG at ${this.exportQuality.scale}x to prevent PDF memory errors.`);
+                window.toast?.warning?.(
+                    `Large export detected (${charts.length} charts). Using JPEG at ${this.exportQuality.scale}x to avoid PDF memory limits.`
+                );
+            }
 
             // Step 2: Render and capture each chart
             for (let i = 0; i < charts.length; i++) {
@@ -297,30 +360,16 @@ class BulkExportManager {
             if (allChartMetadata !== null) {
                 console.log('[BulkExport] Using API charts only (not using localStorage)');
 
-                // Filter to only charts owned by the current user
-                const currentUserId = window.apiClient?.currentUser?.userId || window.currentUser?.userId;
-                const ownedCharts = allChartMetadata.filter(chartMeta => {
-                    // Check userRole if available (preferred method)
-                    if (chartMeta.userRole) {
-                        return chartMeta.userRole === 'owner';
-                    }
-                    // Fallback: check ownerId directly
-                    if (chartMeta.ownerId && currentUserId) {
-                        return chartMeta.ownerId === currentUserId;
-                    }
-                    // If we can't determine ownership, exclude the chart to be safe
-                    console.warn(`[BulkExport] Cannot determine ownership for chart ${chartMeta.id}, excluding from export`);
-                    return false;
-                });
-
-                console.log(`[BulkExport] Charts owned by current user: ${ownedCharts.length}`);
+                // Export all charts returned by the API (viewer access is sufficient for export)
+                const exportableCharts = allChartMetadata.filter(chartMeta => chartMeta && chartMeta.id);
+                console.log(`[BulkExport] Charts available for export: ${exportableCharts.length}`);
 
                 // NOTE: If includeData is not supported by the backend, chartMeta.data will be missing.
                 // Fall back to per-chart fetches in that case.
-                const chartsWithData = new Array(ownedCharts.length);
+                const chartsWithData = new Array(exportableCharts.length);
                 const chartsNeedingFetch = [];
 
-                ownedCharts.forEach((chartMeta, index) => {
+                exportableCharts.forEach((chartMeta, index) => {
                     const chartData = chartMeta.data;
 
                     if (chartData && typeof chartData === 'object') {
@@ -435,62 +484,148 @@ class BulkExportManager {
     }
 
     /**
-     * Measure the actual content bounding box of an SVG by inspecting node positions
-     * Returns the tight bounds of all .node elements, removing excess whitespace
+     * Measure the actual content bounding box of an SVG including nodes and links
+     * Returns the tight bounds of all chart elements in SVG coordinate space.
+     *
+     * FIX: Uses CTM (Current Transformation Matrix) instead of fragile regex parsing
+     * to correctly compute element positions in SVG coordinate space.
      */
     measureSvgContentBounds(svgElement) {
+        console.log('=== MEASURING SVG CONTENT BOUNDS (CTM method) ===');
         if (!svgElement) {
+            console.error('[Bounds] No SVG element provided');
             return null;
         }
 
         try {
-            // Find all node elements in the SVG
-            const nodeElements = svgElement.querySelectorAll('.node, .node-group, [class*="node"]');
+            const svgRect = svgElement.getBoundingClientRect();
+            const originalWidth = svgRect.width || parseInt(svgElement.getAttribute('width')) || 2000;
+            const originalHeight = svgRect.height || parseInt(svgElement.getAttribute('height')) || 1128;
+
+            // Use tighter selectors to avoid nested elements and defs
+            const nodesWrapper = svgElement.querySelector('g.nodes-wrapper');
+            const linksWrapper = svgElement.querySelector('g.links-wrapper');
+
+            const nodeElements = nodesWrapper ? nodesWrapper.querySelectorAll(':scope > g.node') : [];
+            const linkElements = linksWrapper ? linksWrapper.querySelectorAll(':scope > path.link') : [];
+
+            console.log(`[Bounds] Found ${nodeElements.length} nodes, ${linkElements.length} links`);
 
             if (nodeElements.length === 0) {
-                // Fallback: use SVG dimensions if no nodes found
-                const svgRect = svgElement.getBoundingClientRect();
+                console.log('[Bounds] No nodes found, using SVG dimensions');
                 return {
                     x: 0,
                     y: 0,
-                    width: svgRect.width || parseInt(svgElement.getAttribute('width')) || 2000,
-                    height: svgRect.height || parseInt(svgElement.getAttribute('height')) || 1128,
-                    originalWidth: svgRect.width || parseInt(svgElement.getAttribute('width')) || 2000,
-                    originalHeight: svgRect.height || parseInt(svgElement.getAttribute('height')) || 1128,
-                    margin: 50
+                    width: originalWidth,
+                    height: originalHeight,
+                    originalWidth,
+                    originalHeight,
+                    margin: 20
                 };
             }
 
-            // Calculate bounding box by examining all node transforms
+            // Get the SVG's CTM to use as reference for inverse transforms
+            const svgCTM = svgElement.getScreenCTM();
+            if (!svgCTM) {
+                console.warn('[Bounds] Could not get SVG CTM, falling back to SVG dimensions');
+                return {
+                    x: 0, y: 0, width: originalWidth, height: originalHeight,
+                    originalWidth, originalHeight, margin: 20
+                };
+            }
+            const svgCTMInverse = svgCTM.inverse();
+
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
+            /**
+             * Transform a point from element's local coordinate space to SVG coordinate space
+             * using the element's CTM (Current Transformation Matrix).
+             */
+            const transformPointToSvg = (element, localX, localY) => {
+                const elementCTM = element.getScreenCTM();
+                if (!elementCTM) return null;
+
+                // Transform local point to screen coordinates
+                const screenX = elementCTM.a * localX + elementCTM.c * localY + elementCTM.e;
+                const screenY = elementCTM.b * localX + elementCTM.d * localY + elementCTM.f;
+
+                // Transform screen coordinates back to SVG coordinate space
+                const svgX = svgCTMInverse.a * screenX + svgCTMInverse.c * screenY + svgCTMInverse.e;
+                const svgY = svgCTMInverse.b * screenX + svgCTMInverse.d * screenY + svgCTMInverse.f;
+
+                return { x: svgX, y: svgY };
+            };
+
+            /**
+             * Get the effective scale from an element's CTM
+             */
+            const getEffectiveScale = (element) => {
+                const ctm = element.getScreenCTM();
+                if (!ctm) return 1;
+                // Scale is the magnitude of the transform's a/d components
+                return Math.sqrt(ctm.a * ctm.a + ctm.b * ctm.b);
+            };
+
+            // Process nodes using CTM
             nodeElements.forEach(node => {
-                const bbox = node.getBBox();
-                const transform = node.getAttribute('transform');
+                try {
+                    const bbox = node.getBBox();
+                    const scale = getEffectiveScale(node);
 
-                // Parse translate values from transform
-                let tx = 0, ty = 0;
-                if (transform) {
-                    const translateMatch = transform.match(/translate\s*\(\s*([^,\s]+)[\s,]+([^)]+)\)/);
-                    if (translateMatch) {
-                        tx = parseFloat(translateMatch[1]) || 0;
-                        ty = parseFloat(translateMatch[2]) || 0;
-                    }
+                    // Transform all four corners of the bounding box
+                    const corners = [
+                        { x: bbox.x, y: bbox.y },
+                        { x: bbox.x + bbox.width, y: bbox.y },
+                        { x: bbox.x, y: bbox.y + bbox.height },
+                        { x: bbox.x + bbox.width, y: bbox.y + bbox.height }
+                    ];
+
+                    corners.forEach(corner => {
+                        const svgPoint = transformPointToSvg(node, corner.x, corner.y);
+                        if (svgPoint) {
+                            minX = Math.min(minX, svgPoint.x);
+                            minY = Math.min(minY, svgPoint.y);
+                            maxX = Math.max(maxX, svgPoint.x);
+                            maxY = Math.max(maxY, svgPoint.y);
+                        }
+                    });
+                } catch (e) {
+                    console.warn('[Bounds] Error processing node:', e.message);
                 }
-
-                const left = tx + bbox.x;
-                const right = left + bbox.width;
-                const top = ty + bbox.y;
-                const bottom = top + bbox.height;
-
-                minX = Math.min(minX, left);
-                minY = Math.min(minY, top);
-                maxX = Math.max(maxX, right);
-                maxY = Math.max(maxY, bottom);
             });
 
-            // Add configurable padding around content
-            const padding = 50; // pixels
+            // Process links using CTM
+            linkElements.forEach(link => {
+                try {
+                    const bbox = link.getBBox();
+
+                    // Transform all four corners
+                    const corners = [
+                        { x: bbox.x, y: bbox.y },
+                        { x: bbox.x + bbox.width, y: bbox.y },
+                        { x: bbox.x, y: bbox.y + bbox.height },
+                        { x: bbox.x + bbox.width, y: bbox.y + bbox.height }
+                    ];
+
+                    corners.forEach(corner => {
+                        const svgPoint = transformPointToSvg(link, corner.x, corner.y);
+                        if (svgPoint) {
+                            minX = Math.min(minX, svgPoint.x);
+                            minY = Math.min(minY, svgPoint.y);
+                            maxX = Math.max(maxX, svgPoint.x);
+                            maxY = Math.max(maxY, svgPoint.y);
+                        }
+                    });
+                } catch (e) {
+                    // Skip links that can't be measured
+                }
+            });
+
+            // Add minimal padding around content for visual breathing room
+            const padding = 20;
+
+            console.log(`[Bounds] Before padding: minX=${minX.toFixed(1)}, minY=${minY.toFixed(1)}, maxX=${maxX.toFixed(1)}, maxY=${maxY.toFixed(1)}`);
+
             minX -= padding;
             minY -= padding;
             maxX += padding;
@@ -499,9 +634,16 @@ class BulkExportManager {
             const contentWidth = maxX - minX;
             const contentHeight = maxY - minY;
 
-            const svgRect = svgElement.getBoundingClientRect();
-            const originalWidth = svgRect.width || parseInt(svgElement.getAttribute('width')) || 2000;
-            const originalHeight = svgRect.height || parseInt(svgElement.getAttribute('height')) || 1128;
+            console.log(`[Bounds] Final SVG bounds: x=${minX.toFixed(1)}, y=${minY.toFixed(1)}, w=${contentWidth.toFixed(1)}, h=${contentHeight.toFixed(1)}`);
+            console.log(`[Bounds] SVG viewport: ${originalWidth}×${originalHeight}`);
+
+            // Log overlap check for debugging
+            const overlapX = Math.max(0, Math.min(maxX, originalWidth) - Math.max(minX, 0));
+            const overlapY = Math.max(0, Math.min(maxY, originalHeight) - Math.max(minY, 0));
+            const overlapArea = overlapX * overlapY;
+            const contentArea = contentWidth * contentHeight;
+            const overlapPercent = contentArea > 0 ? (overlapArea / contentArea * 100).toFixed(1) : 0;
+            console.log(`[Bounds] Overlap with viewport: ${overlapPercent}% (${overlapX.toFixed(0)}×${overlapY.toFixed(0)}px)`);
 
             return {
                 x: minX,
@@ -513,8 +655,8 @@ class BulkExportManager {
                 margin: padding
             };
         } catch (error) {
-            console.warn('[Export] Failed to measure SVG bounds:', error);
-            // Return safe defaults
+            console.error('=== ERROR IN MEASURE BOUNDS ===', error);
+            console.error('[Export] Failed to measure SVG bounds:', error.message, error.stack);
             return {
                 x: 0,
                 y: 0,
@@ -522,9 +664,217 @@ class BulkExportManager {
                 height: 1128,
                 originalWidth: 2000,
                 originalHeight: 1128,
-                margin: 50
+                margin: 20
             };
         }
+    }
+
+    /**
+     * Measure overlay bounds relative to SVG container
+     * @param {HTMLElement} overlay - The .export-node-overlay element
+     * @param {SVGElement} svgNode - The SVG element for reference positioning
+     * @returns {Object} Bounds {x, y, width, height} or null if not measurable
+     */
+    measureDomNodeBounds(svgNode) {
+        if (!svgNode) {
+            return null;
+        }
+
+        const nodeElements = svgNode.querySelectorAll('g.node');
+        if (!nodeElements.length) {
+            return null;
+        }
+
+        const svgRect = svgNode.getBoundingClientRect();
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+        nodeElements.forEach(nodeEl => {
+            const rect = nodeEl.getBoundingClientRect();
+            const x = rect.left - svgRect.left;
+            const y = rect.top - svgRect.top;
+            const right = x + rect.width;
+            const bottom = y + rect.height;
+
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, right);
+            maxY = Math.max(maxY, bottom);
+        });
+
+        if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+            return null;
+        }
+
+        return {
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
+        };
+    }
+
+    /**
+     * Measure overlay bounds relative to SVG container
+     * @param {HTMLElement} overlay - The .export-node-overlay element
+     * @param {SVGElement} svgNode - The SVG element for reference positioning
+     * @returns {Object} Bounds {x, y, width, height} or null if not measurable
+     */
+    measureOverlayBounds(overlay, svgNode) {
+        if (!overlay || !svgNode) {
+            return null;
+        }
+
+        const nodeWrappers = overlay.querySelectorAll(':scope > div');
+        if (nodeWrappers.length === 0) {
+            return null;
+        }
+
+        const svgRect = svgNode.getBoundingClientRect();
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+        nodeWrappers.forEach(wrapper => {
+            const rect = wrapper.getBoundingClientRect();
+            // Position relative to SVG
+            const x = rect.left - svgRect.left;
+            const y = rect.top - svgRect.top;
+            const right = x + rect.width;
+            const bottom = y + rect.height;
+
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, right);
+            maxY = Math.max(maxY, bottom);
+        });
+
+        if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+            return null;
+        }
+
+        const bounds = {
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
+        };
+
+        console.log(`[Overlay Bounds] ${nodeWrappers.length} wrappers: x=${bounds.x.toFixed(1)}, y=${bounds.y.toFixed(1)}, w=${bounds.width.toFixed(1)}, h=${bounds.height.toFixed(1)}`);
+        return bounds;
+    }
+
+    /**
+     * Disable or expand clip paths so wide charts are not cropped during export.
+     * This is export-only and does not affect the editor view.
+     */
+    disableSvgClipPaths(svgNode, fallbackWidth, fallbackHeight) {
+        if (!svgNode) {
+            return;
+        }
+
+        const rect = svgNode.getBoundingClientRect();
+        const svgWidth = fallbackWidth || rect.width || parseInt(svgNode.getAttribute('width')) || 2000;
+        const svgHeight = fallbackHeight || rect.height || parseInt(svgNode.getAttribute('height')) || 1128;
+        const expand = Math.max(svgWidth, svgHeight) * 2;
+
+        const clipPaths = svgNode.querySelectorAll('clipPath');
+        clipPaths.forEach(cp => {
+            const clipRect = cp.querySelector('rect');
+            if (clipRect) {
+                clipRect.setAttribute('x', -expand);
+                clipRect.setAttribute('y', -expand);
+                clipRect.setAttribute('width', svgWidth + (expand * 2));
+                clipRect.setAttribute('height', svgHeight + (expand * 2));
+            } else {
+                const ns = 'http://www.w3.org/2000/svg';
+                const newRect = document.createElementNS(ns, 'rect');
+                newRect.setAttribute('x', -expand);
+                newRect.setAttribute('y', -expand);
+                newRect.setAttribute('width', svgWidth + (expand * 2));
+                newRect.setAttribute('height', svgHeight + (expand * 2));
+                cp.appendChild(newRect);
+            }
+        });
+
+        const clippedNodes = svgNode.querySelectorAll('[clip-path], g.nodes-wrapper, g.links-wrapper');
+        clippedNodes.forEach(el => {
+            if (el.hasAttribute('clip-path')) {
+                el.setAttribute('data-export-clip-path', el.getAttribute('clip-path') || '');
+                el.removeAttribute('clip-path');
+            }
+            el.style.clipPath = 'none';
+        });
+
+        if (clipPaths.length || clippedNodes.length) {
+            console.log(`[Export] Disabled clip paths: defs=${clipPaths.length}, elements=${clippedNodes.length}`);
+        }
+    }
+
+    getChartTransformTargets(svgNode) {
+        if (!svgNode) {
+            return [];
+        }
+
+        const centerG = svgNode.querySelector('.centerG');
+        if (centerG) {
+            return [centerG];
+        }
+
+        const nodesWrapper = svgNode.querySelector('g.nodes-wrapper');
+        const linksWrapper = svgNode.querySelector('g.links-wrapper');
+
+        if (nodesWrapper && linksWrapper && nodesWrapper.parentElement && nodesWrapper.parentElement === linksWrapper.parentElement) {
+            return [nodesWrapper.parentElement];
+        }
+
+        const targets = [];
+        if (nodesWrapper) {
+            targets.push(nodesWrapper);
+        }
+        if (linksWrapper && linksWrapper !== nodesWrapper) {
+            targets.push(linksWrapper);
+        }
+        return targets;
+    }
+
+    applyTransformToTargets(targets, translateX, translateY, scale) {
+        if (!targets || targets.length === 0) {
+            return;
+        }
+        const transformValue = scale < 1
+            ? `translate(${translateX}, ${translateY}) scale(${scale})`
+            : `translate(${translateX}, ${translateY})`;
+        targets.forEach((target) => {
+            target.setAttribute('transform', transformValue);
+        });
+    }
+
+    /**
+     * Compute union of SVG bounds and overlay bounds
+     * @param {Object} svgBounds - Bounds from measureSvgContentBounds
+     * @param {Object} overlayBounds - Bounds from measureOverlayBounds
+     * @returns {Object} Union bounds
+     */
+    computeUnionBounds(svgBounds, overlayBounds) {
+        if (!overlayBounds) {
+            return svgBounds;
+        }
+
+        const minX = Math.min(svgBounds.x, overlayBounds.x);
+        const minY = Math.min(svgBounds.y, overlayBounds.y);
+        const maxX = Math.max(svgBounds.x + svgBounds.width, overlayBounds.x + overlayBounds.width);
+        const maxY = Math.max(svgBounds.y + svgBounds.height, overlayBounds.y + overlayBounds.height);
+
+        const unionBounds = {
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY,
+            originalWidth: svgBounds.originalWidth,
+            originalHeight: svgBounds.originalHeight,
+            margin: svgBounds.margin
+        };
+
+        console.log(`[Union Bounds] SVG: ${svgBounds.width.toFixed(0)}×${svgBounds.height.toFixed(0)}, Overlay: ${overlayBounds.width.toFixed(0)}×${overlayBounds.height.toFixed(0)}, Union: ${unionBounds.width.toFixed(0)}×${unionBounds.height.toFixed(0)}`);
+        return unionBounds;
     }
 
     /**
@@ -570,6 +920,60 @@ class BulkExportManager {
             offsetY,
             finalWidth: scaledWidth,
             finalHeight: scaledHeight
+        };
+    }
+
+    /**
+     * Calculate required page size to maintain minimum readable scale
+     * If the computed scale is below MIN_EXPORT_SCALE, grow the page instead of shrinking the chart
+     *
+     * @param {object} contentBounds - Chart content bounds {x, y, width, height}
+     * @param {object} scaleInfo - Result from computeOptimalScale()
+     * @param {object} defaultPageSize - Default page dimensions {width, height} in points
+     * @param {object} insets - Page insets {left, right, top, bottom} in points
+     * @returns {object} {pageWidth, pageHeight, scale, offsetX, offsetY} - Custom page dimensions if needed
+     */
+    computePageSizeForMinScale(contentBounds, scaleInfo, defaultPageSize, insets) {
+        // If scale is acceptable, use default page size
+        if (scaleInfo.scale >= this.MIN_EXPORT_SCALE) {
+            return {
+                pageWidth: defaultPageSize.width,
+                pageHeight: defaultPageSize.height,
+                scale: scaleInfo.scale,
+                offsetX: scaleInfo.offsetX,
+                offsetY: scaleInfo.offsetY,
+                finalWidth: scaleInfo.finalWidth,
+                finalHeight: scaleInfo.finalHeight,
+                wasResized: false
+            };
+        }
+
+        // Scale is too small - calculate required page size to maintain MIN_EXPORT_SCALE
+        const requiredScale = this.MIN_EXPORT_SCALE;
+        const scaledWidth = contentBounds.width * requiredScale;
+        const scaledHeight = contentBounds.height * requiredScale;
+
+        // Add insets to get total page size
+        const requiredPageWidth = scaledWidth + insets.left + insets.right;
+        const requiredPageHeight = scaledHeight + insets.top + insets.bottom;
+
+        // Calculate offsets (center the chart in the available area)
+        const availableWidth = requiredPageWidth - insets.left - insets.right;
+        const availableHeight = requiredPageHeight - insets.top - insets.bottom;
+        const offsetX = (availableWidth - scaledWidth) / 2;
+        const offsetY = (availableHeight - scaledHeight) / 2;
+
+        console.log(`[Export] Scale ${scaleInfo.scale.toFixed(2)} too small, increasing page from ${defaultPageSize.width}×${defaultPageSize.height}pt to ${Math.round(requiredPageWidth)}×${Math.round(requiredPageHeight)}pt (scale: ${requiredScale})`);
+
+        return {
+            pageWidth: requiredPageWidth,
+            pageHeight: requiredPageHeight,
+            scale: requiredScale,
+            offsetX: Math.max(0, offsetX),
+            offsetY: Math.max(0, offsetY),
+            finalWidth: scaledWidth,
+            finalHeight: scaledHeight,
+            wasResized: true
         };
     }
 
@@ -645,48 +1049,12 @@ class BulkExportManager {
         const maxBreadth = Math.max(...Array.from(levelCounts.values()), 1);  // Max nodes at any level
         const totalNodes = nodes.length;
 
-        // Adaptive layout parameters based on tree characteristics
-        // Start with generous base values to prevent overlaps
-        let nodeWidth = 250;
-        let childrenMargin = 100;   // Vertical spacing between parent and children (increased from 80)
-        let compactMarginBetween = 40;  // Horizontal spacing between siblings (increased from 25)
-        let compactMarginPair = 120;    // Spacing between sibling groups (increased from 100)
-
-        // Adjust based on breadth (max nodes at any level)
-        if (maxBreadth > 10) {
-            // Very wide tree: smaller nodes, more spacing
-            nodeWidth = 200;
-            compactMarginBetween = 50;   // Critical: extra spacing for wide levels
-            compactMarginPair = 140;
-            childrenMargin = 110;
-        } else if (maxBreadth > 7) {
-            // Wide tree: moderate reduction, increased spacing
-            nodeWidth = 220;
-            compactMarginBetween = 45;
-            compactMarginPair = 130;
-            childrenMargin = 105;
-        } else if (maxBreadth > 4) {
-            // Medium tree: slight adjustments
-            nodeWidth = 235;
-            compactMarginBetween = 42;
-            compactMarginPair = 125;
-        }
-
-        // Adjust based on depth (number of levels)
-        if (depth > 6) {
-            // Very deep tree: increase vertical spacing significantly
-            childrenMargin = 120;
-        } else if (depth > 4) {
-            childrenMargin = 110;
-        }
-
-        // For dense trees, add extra padding everywhere
-        const density = totalNodes / (depth * maxBreadth || 1);
-        if (density > 1.5) {
-            childrenMargin += 20;
-            compactMarginBetween += 15;
-            compactMarginPair += 20;
-        }
+        // Fixed layout parameters matching the editor for consistency
+        // Using the same values as chart-editor.js:448-455 ensures exports match the editor view
+        const nodeWidth = 250;
+        const childrenMargin = 80;
+        const compactMarginBetween = 25;
+        const compactMarginPair = 100;
 
         return {
             depth,
@@ -702,18 +1070,74 @@ class BulkExportManager {
     }
 
     /**
+     * Measure node heights in a hidden DOM container to avoid foreignObject clipping.
+     */
+    measureNodeHeights(chartNodes, nodeWidth, resolvedCSS, cssVariables) {
+        if (!Array.isArray(chartNodes) || chartNodes.length === 0) {
+            return;
+        }
+
+        const renderer = this.getNodeRenderer();
+        const measureContainer = document.createElement('div');
+        measureContainer.style.cssText = `
+            position: absolute;
+            left: -99999px;
+            top: -99999px;
+            visibility: hidden;
+            width: ${nodeWidth}px;
+        `;
+
+        const styleTag = document.createElement('style');
+        const nodeRendererCSS = typeof OrgNodeRenderer !== 'undefined' && OrgNodeRenderer.getNodeStyles
+            ? OrgNodeRenderer.getNodeStyles()
+            : '';
+        styleTag.textContent = `${resolvedCSS}\n${nodeRendererCSS}\n.org-chart-node.multi-person{overflow:visible !important;}`;
+        measureContainer.appendChild(styleTag);
+
+        if (cssVariables) {
+            for (const [varName, value] of Object.entries(cssVariables)) {
+                measureContainer.style.setProperty(varName, value.trim());
+            }
+        }
+
+        document.body.appendChild(measureContainer);
+
+        try {
+            chartNodes.forEach(node => {
+                const wrapper = document.createElement('div');
+                wrapper.style.cssText = `width: ${nodeWidth}px;`;
+                wrapper.innerHTML = renderer.renderNodeContent({ data: node, width: nodeWidth });
+                measureContainer.appendChild(wrapper);
+
+                const measuredHeight = Math.ceil(wrapper.scrollHeight || wrapper.offsetHeight || 0);
+                if (measuredHeight > 0) {
+                    node.__measuredHeight = measuredHeight;
+                }
+
+                measureContainer.removeChild(wrapper);
+            });
+        } finally {
+            document.body.removeChild(measureContainer);
+        }
+    }
+
+    /**
      * Render a single chart off-screen and capture as image
      */
     async renderChartOffScreen(chartData) {
+        console.log('=== RENDER CHART OFF-SCREEN ===');
+        console.log(`[Export] Chart: "${chartData.chartName || chartData.name}"`);
+        console.log(`[Export] Capture method: ${typeof html2canvas === 'function' ? 'html2canvas (DOM-based)' : 'SVG exportImg (fallback)'}`);
+
         const renderer = this.getNodeRenderer();
         const config = await this.getTemplateConfig();
         const viewState = chartData.viewState || {};
         const chartNodes = this.prepareChartNodes(chartData);
 
-        // Analyze chart structure for adaptive spacing
+        // Analyze chart structure for canvas sizing
         const analysis = this.analyzeChartStructure(chartData.nodes || []);
-        console.log(`[Export] Chart "${chartData.name}": ${analysis.totalNodes} nodes, depth=${analysis.depth}, breadth=${analysis.maxBreadth}`);
-        console.log(`[Export] Adaptive layout: nodeWidth=${analysis.layoutParams.nodeWidth}, childrenMargin=${analysis.layoutParams.childrenMargin}, compactMarginBetween=${analysis.layoutParams.compactMarginBetween}`);
+        console.log(`[Export] Structure: ${analysis.totalNodes} nodes, depth=${analysis.depth}, breadth=${analysis.maxBreadth}`);
+        console.log(`[Export] Fixed layout (matches editor): nodeWidth=${analysis.layoutParams.nodeWidth}, childrenMargin=${analysis.layoutParams.childrenMargin}, compactMarginBetween=${analysis.layoutParams.compactMarginBetween}`);
 
         // Dynamic canvas sizing: larger canvas for complex charts prevents fit() from over-compressing
         const baseCaptureWidth = config.images?.captureWidthPx || 2000;
@@ -748,6 +1172,15 @@ class BulkExportManager {
         const cssVariables = await this.getResolvedCSSVariables();
         const resolvedCSS = this.resolveCSSVariables(stylesheetCSS, cssVariables);
 
+        // CRITICAL: Wait for fonts BEFORE any measurement to ensure text wrapping is accurate
+        if (document.fonts && document.fonts.ready) {
+            await document.fonts.ready;
+            console.log('[Export] Fonts loaded before measurement');
+        }
+
+        // Pre-measure node heights to avoid foreignObject clipping on long names
+        this.measureNodeHeights(chartNodes, analysis.layoutParams.nodeWidth, resolvedCSS, cssVariables);
+
         return new Promise((resolve, reject) => {
             const container = document.getElementById('bulk-export-container');
 
@@ -765,122 +1198,535 @@ class BulkExportManager {
             // Inject the full stylesheet into the canvas div for proper rendering
             const styleTag = document.createElement('style');
             styleTag.id = 'export-injected-styles';
-            styleTag.textContent = resolvedCSS;
+
+            // Combine main stylesheet CSS with OrgNodeRenderer styles for node parity with editor
+            const nodeRendererCSS = typeof OrgNodeRenderer !== 'undefined' && OrgNodeRenderer.getNodeStyles
+                ? OrgNodeRenderer.getNodeStyles()
+                : '';
+            styleTag.textContent = resolvedCSS + '\n\n/* OrgNodeRenderer Styles */\n' + this.resolveCSSVariables(nodeRendererCSS, cssVariables);
             canvasDiv.appendChild(styleTag);
+
+            // Apply CSS variables directly to the export container as custom properties
+            // This ensures any var() references in inline styles or dynamic CSS resolve correctly
+            for (const [varName, value] of Object.entries(cssVariables)) {
+                canvasDiv.style.setProperty(varName, value.trim());
+            }
 
             container.appendChild(canvasDiv);
 
             try {
-                // Create temporary org chart instance with adaptive spacing and dynamic sizing
+                // TWO-PASS LAYOUT: First render with estimated heights, then measure and re-render
                 const params = analysis.layoutParams;
-                const tempChart = new d3.OrgChart()
+
+                // PASS 1: Initial render with estimated heights
+                let tempChart = new d3.OrgChart()
                     .container('#temp-chart-canvas')
                     .data(chartNodes)
-                    .svgWidth(captureWidth)    // Use dynamic canvas width
-                    .svgHeight(captureHeight)  // Use dynamic canvas height
+                    .svgWidth(captureWidth)
+                    .svgHeight(captureHeight)
                     .nodeWidth(() => params.nodeWidth)
-                    .nodeHeight((d) => renderer.calculateNodeHeight(d.data || d))
+                    .nodeHeight((d) => {
+                        const node = d.data || d;
+                        return node.__measuredHeight || renderer.calculateNodeHeight(node);
+                    })
                     .childrenMargin(() => params.childrenMargin)
                     .compactMarginBetween(() => params.compactMarginBetween)
                     .compactMarginPair(() => params.compactMarginPair)
                     .compact(false)
+                    .duration(0)
                     .layout(chartData.layout || 'top')
                     .nodeContent((d) => renderer.renderNodeContent(d))
                     .render();
 
-                // Wait for chart to finish rendering before capture
+                // Wait for initial render to complete
                 const maxWait = this.calculateRenderTimeout(chartData);
                 this.waitForChartRender(canvasDiv, maxWait)
-                    .then(() => {
-                        // For export: skip collapsed state to always show full org tree
-                        // Users can manually collapse in editor, but exports should be comprehensive
-                        // TODO: Add user preference toggle for "Respect current view" vs "Full tree"
+                    .then(async () => {
+                        // Wait for layout to settle after initial render
+                        await new Promise(resolve => requestAnimationFrame(() => {
+                            requestAnimationFrame(resolve);
+                        }));
 
-                        // Explicitly call fit() to ensure all nodes are visible and properly framed
-                        // Because we sized the canvas based on tree complexity, fit() won't need to
-                        // compress the spacing - it will just center/position the content
-                        if (typeof tempChart.fit === 'function') {
-                            tempChart.fit();
-                            console.log(`[Export] Called fit() to center content (canvas is sized for tree complexity)`);
-                        }
+                        // PASS 2: Measure actual DOM heights from rendered nodes
+                        const svgNode = canvasDiv.querySelector('svg');
+                        const nodeElements = svgNode.querySelectorAll('g.node');
+                        let heightsChanged = false;
+                        let maxMeasuredHeight = 0;
+                        let effectiveCaptureWidth = captureWidth;   // Track if canvas width was resized
+                        let effectiveCaptureHeight = captureHeight; // Track if canvas height was resized
+                        const MAX_CAPTURE_WIDTH = 4500;  // Prevent memory issues
 
-                        // Wait a moment for fit() to complete
-                        setTimeout(() => {
-                            const svgNode = canvasDiv.querySelector('svg');
-                            this.injectNodeStyles(svgNode, resolvedCSS);
+                        nodeElements.forEach(nodeEl => {
+                            const datum = d3.select(nodeEl).datum();
+                            if (!datum) return;
 
-                            // Measure SVG content bounds AFTER fit() for accurate dimensions
-                            const contentBounds = this.measureSvgContentBounds(svgNode);
+                            // Find the foreignObject or inner content element
+                            const foreignObject = nodeEl.querySelector('foreignObject');
+                            const innerContent = foreignObject?.querySelector('.org-chart-node');
 
-                            // Define page insets (margins for legibility while maximizing chart area)
-                            // Page: 1680×947pt landscape (16:9)
-                            const pageWidth = config.page?.width || 1680;
-                            const pageHeight = config.page?.height || 947;
-                            const insets = {
-                                left: 80,    // Space for page edge
-                                right: 80,   // Space for page edge
-                                top: 140,    // Space for department title
-                                bottom: 70   // Space for footer
-                            };
+                            if (innerContent) {
+                                const rect = innerContent.getBoundingClientRect();
+                                const measuredHeight = Math.ceil(rect.height);
 
-                            const availableWidth = pageWidth - insets.left - insets.right;   // ~1520pt
-                            const availableHeight = pageHeight - insets.top - insets.bottom; // ~737pt
-
-                            // Compute optimal scale to fill 95% of available area (aggressive but safe)
-                            const scaleInfo = this.computeOptimalScale(
-                                contentBounds,
-                                availableWidth,
-                                availableHeight,
-                                0.95  // Fill 95% for maximum page usage
-                            );
-
-                            console.log(`[Export] Chart "${chartData.name}": content ${Math.round(contentBounds.width)}×${Math.round(contentBounds.height)}px, scale ${scaleInfo.scale.toFixed(2)}x to fill page`);
-
-                            // Always use full: true to call chart.fit() for consistent framing
-                            tempChart.exportImg({
-                                full: true,
-                                save: false,
-                                scale: this.exportQuality.scale,
-                            onLoad: async (base64Image) => {
-                                try {
-                                    const compressedImage = await this.compressImage(
-                                        base64Image,
-                                        this.exportQuality.compression
-                                    );
-
-                                    const previewImage = await this.resizeImageDataUrl(
-                                        compressedImage,
-                                        config.images?.previewWidthPx || 800
-                                    );
-
-                                    const svgMarkup = svgNode ? this.serializeSvg(svgNode, resolvedCSS) : null;
-
-                                    const format = compressedImage.startsWith('data:image/png') ? 'PNG' : 'JPEG';
-
-                                    resolve({
-                                        primary: {
-                                            dataUrl: compressedImage,
-                                            format,
-                                            width: captureWidth,
-                                            height: captureHeight
-                                        },
-                                        preview: previewImage,
-                                        svg: svgMarkup,
-                                        // Include bounds and scale metadata for PDF placement
-                                        bounds: contentBounds,
-                                        scale: scaleInfo
-                                    });
-                                } finally {
-                                    tempChart.clear();
-                                    canvasDiv.remove();
+                                // Store on datum.data for nodeHeight callback
+                                if (datum.data) {
+                                    const oldHeight = datum.data.__measuredHeight || renderer.calculateNodeHeight(datum.data);
+                                    const effectiveHeight = Math.max(oldHeight, measuredHeight);
+                                    if (measuredHeight > oldHeight + 2) {
+                                        datum.data.__measuredHeight = measuredHeight;
+                                        heightsChanged = true;
+                                    }
+                                    maxMeasuredHeight = Math.max(maxMeasuredHeight, effectiveHeight);
                                 }
                             }
                         });
-                        }, 200); // Wait 200ms for fit() to complete
+
+                        console.log(`[Export] Measured ${nodeElements.length} nodes, heightsChanged=${heightsChanged}, maxHeight=${maxMeasuredHeight}`);
+
+                        // If heights changed significantly, re-render with measured heights
+                        if (heightsChanged) {
+                            console.log('[Export] Re-rendering with measured heights...');
+
+                            // Recompute canvas size based on actual measured heights
+                            const newEstimatedHeight = analysis.depth * (maxMeasuredHeight + params.childrenMargin) + 300;
+                            const newCaptureHeight = Math.min(Math.max(captureHeight, newEstimatedHeight), 3500);
+
+                            if (newCaptureHeight > captureHeight) {
+                                canvasDiv.style.height = `${newCaptureHeight}px`;
+                                effectiveCaptureHeight = newCaptureHeight;
+                                console.log(`[Export] Canvas height increased: ${captureHeight} → ${newCaptureHeight}px`);
+                            }
+
+                            // Clear and re-render with measured heights
+                            tempChart.clear();
+                            tempChart = new d3.OrgChart()
+                                .container('#temp-chart-canvas')
+                                .data(chartNodes)
+                                .svgWidth(effectiveCaptureWidth)
+                                .svgHeight(newCaptureHeight)
+                                .nodeWidth(() => params.nodeWidth)
+                                .nodeHeight((d) => {
+                                    const node = d.data || d;
+                                    return node.__measuredHeight || renderer.calculateNodeHeight(node);
+                                })
+                                .childrenMargin(() => params.childrenMargin)
+                                .compactMarginBetween(() => params.compactMarginBetween)
+                                .compactMarginPair(() => params.compactMarginPair)
+                                .compact(false)
+                                .duration(0)
+                                .layout(chartData.layout || 'top')
+                                .nodeContent((d) => renderer.renderNodeContent(d))
+                                .render();
+
+                            // Wait for re-render to complete
+                            await this.waitForChartRender(canvasDiv, maxWait);
+                            await new Promise(resolve => requestAnimationFrame(() => {
+                                requestAnimationFrame(resolve);
+                            }));
+                        }
+
+                        // PASS 3: Measure actual content bounds (including links/strokes) and expand canvas if needed
+                        // Use measureSvgContentBounds() for accurate measurement including all strokes
+                        const svgAfterHeight = canvasDiv.querySelector('svg');
+                        let preCenterBounds = this.measureSvgContentBounds(svgAfterHeight);
+                        const widthPadding = 100; // Extra padding for safety
+
+                        if (preCenterBounds) {
+                            const requiredWidth = preCenterBounds.width + (widthPadding * 2);
+                            const heightPadding = 120; // Extra padding for safety
+                            const MAX_CAPTURE_HEIGHT = 3500;
+                            const requiredHeight = preCenterBounds.height + (heightPadding * 2);
+
+                            let needsResize = false;
+                            let newWidth = effectiveCaptureWidth;
+                            let newHeight = effectiveCaptureHeight;
+
+                            if (requiredWidth > effectiveCaptureWidth && requiredWidth <= MAX_CAPTURE_WIDTH) {
+                                newWidth = Math.min(requiredWidth + 100, MAX_CAPTURE_WIDTH);
+                                needsResize = true;
+                                console.log(`[Export] Content width ${preCenterBounds.width.toFixed(0)}px (bounds) exceeds canvas, expanding: ${effectiveCaptureWidth} ? ${newWidth}px`);
+                            }
+
+                            if (requiredHeight > effectiveCaptureHeight && requiredHeight <= MAX_CAPTURE_HEIGHT) {
+                                newHeight = Math.min(requiredHeight + 100, MAX_CAPTURE_HEIGHT);
+                                needsResize = true;
+                                console.log(`[Export] Content height ${preCenterBounds.height.toFixed(0)}px (bounds) exceeds canvas, expanding: ${effectiveCaptureHeight} ? ${newHeight}px`);
+                            }
+
+                            if (needsResize) {
+                                // Update canvas and re-render with new dimensions
+                                canvasDiv.style.width = `${newWidth}px`;
+                                canvasDiv.style.height = `${newHeight}px`;
+                                effectiveCaptureWidth = newWidth;
+                                effectiveCaptureHeight = newHeight;
+
+                                tempChart.clear();
+                                tempChart = new d3.OrgChart()
+                                    .container('#temp-chart-canvas')
+                                    .data(chartNodes)
+                                    .svgWidth(effectiveCaptureWidth)
+                                    .svgHeight(effectiveCaptureHeight)
+                                    .nodeWidth(() => params.nodeWidth)
+                                    .nodeHeight((d) => {
+                                        const node = d.data || d;
+                                        return node.__measuredHeight || renderer.calculateNodeHeight(node);
+                                    })
+                                    .childrenMargin(() => params.childrenMargin)
+                                    .compactMarginBetween(() => params.compactMarginBetween)
+                                    .compactMarginPair(() => params.compactMarginPair)
+                                    .compact(false)
+                                    .duration(0)
+                                    .layout(chartData.layout || 'top')
+                                    .nodeContent((d) => renderer.renderNodeContent(d))
+                                    .render();
+
+                                await this.waitForChartRender(canvasDiv, maxWait);
+                                await new Promise(resolve => requestAnimationFrame(() => {
+                                    requestAnimationFrame(resolve);
+                                }));
+
+                                // Re-measure bounds after expansion
+                                preCenterBounds = this.measureSvgContentBounds(canvasDiv.querySelector('svg'));
+                            }
+                        }
+
+                        // CENTER WITH OPTIONAL SCALE-DOWN: Use measureSvgContentBounds for accurate positioning
+                        const svgNodeFinal = canvasDiv.querySelector('svg');
+                        const transformTargets = this.getChartTransformTargets(svgNodeFinal);
+
+                        if (transformTargets.length && preCenterBounds) {
+                            const svgWidth = parseInt(svgNodeFinal.getAttribute('width')) || effectiveCaptureWidth;
+                            const svgHeight = parseInt(svgNodeFinal.getAttribute('height')) || effectiveCaptureHeight;
+
+                            const contentPadding = 40; // Padding on each side
+                            const availableWidth = svgWidth - (contentPadding * 2);
+                            const availableHeight = svgHeight - (contentPadding * 2);
+
+                            // Only scale down if content exceeds available space (very wide charts)
+                            let scale = 1;
+                            if (preCenterBounds.width > availableWidth || preCenterBounds.height > availableHeight) {
+                                const scaleX = availableWidth / preCenterBounds.width;
+                                const scaleY = availableHeight / preCenterBounds.height;
+                                scale = Math.min(scaleX, scaleY, 1); // Never scale up, only down
+                                console.log(`[Export] Content ${preCenterBounds.width.toFixed(0)}×${preCenterBounds.height.toFixed(0)} exceeds available ${availableWidth.toFixed(0)}×${availableHeight.toFixed(0)}, scaling to ${scale.toFixed(3)}`);
+                            }
+
+                            // Calculate translation using bounds.x/bounds.y for accurate positioning
+                            const scaledWidth = preCenterBounds.width * scale;
+                            const scaledHeight = preCenterBounds.height * scale;
+                            let translateX = (svgWidth - scaledWidth) / 2 - preCenterBounds.x * scale;
+                            let translateY = (svgHeight - scaledHeight) / 2 - preCenterBounds.y * scale;
+
+                            // Apply initial transform
+                            this.applyTransformToTargets(transformTargets, translateX, translateY, scale);
+                            if (scale < 1) {
+                                console.log(`[Export] Centered + scaled chart: translate(${translateX.toFixed(0)}, ${translateY.toFixed(0)}) scale(${scale.toFixed(3)})`);
+                            } else {
+                                console.log(`[Export] Centered chart: translate(${translateX.toFixed(0)}, ${translateY.toFixed(0)}), bounds ${preCenterBounds.width.toFixed(0)}×${preCenterBounds.height.toFixed(0)}`);
+                            }
+
+                            // Wait for transform to apply
+                            await new Promise(resolve => requestAnimationFrame(resolve));
+
+                            // POST-CENTER CORRECTION: Re-measure and adjust if content is still outside
+                            const postCenterBounds = this.measureSvgContentBounds(svgNodeFinal);
+                            if (postCenterBounds) {
+                                let correctionNeeded = false;
+                                let deltaX = 0;
+                                let deltaY = 0;
+
+                                // Check X bounds
+                                if (postCenterBounds.x < contentPadding) {
+                                    deltaX = contentPadding - postCenterBounds.x;
+                                    correctionNeeded = true;
+                                } else if (postCenterBounds.x + postCenterBounds.width > svgWidth - contentPadding) {
+                                    deltaX = (svgWidth - contentPadding) - (postCenterBounds.x + postCenterBounds.width);
+                                    correctionNeeded = true;
+                                }
+
+                                // Check Y bounds
+                                if (postCenterBounds.y < contentPadding) {
+                                    deltaY = contentPadding - postCenterBounds.y;
+                                    correctionNeeded = true;
+                                } else if (postCenterBounds.y + postCenterBounds.height > svgHeight - contentPadding) {
+                                    deltaY = (svgHeight - contentPadding) - (postCenterBounds.y + postCenterBounds.height);
+                                    correctionNeeded = true;
+                                }
+
+                                if (correctionNeeded) {
+                                    translateX += deltaX;
+                                    translateY += deltaY;
+                                    console.log(`[Export] Post-center correction: deltaX=${deltaX.toFixed(0)}, deltaY=${deltaY.toFixed(0)}`);
+
+                                    this.applyTransformToTargets(transformTargets, translateX, translateY, scale);
+                                }
+                            }
+
+                            // DOM bounds correction: use actual rendered node boxes for edge cases
+                            await new Promise(resolve => requestAnimationFrame(resolve));
+                            let domBounds = this.measureDomNodeBounds(svgNodeFinal);
+                            if (domBounds) {
+                                // If DOM bounds still exceed available space, reduce scale further
+                                const domScaleX = availableWidth / domBounds.width;
+                                const domScaleY = availableHeight / domBounds.height;
+                                const domScaleAdjustment = Math.min(domScaleX, domScaleY, 1);
+
+                                if (domScaleAdjustment < 0.999) {
+                                    scale *= domScaleAdjustment;
+
+                                    const adjustedWidth = preCenterBounds.width * scale;
+                                    const adjustedHeight = preCenterBounds.height * scale;
+                                    translateX = (svgWidth - adjustedWidth) / 2 - preCenterBounds.x * scale;
+                                    translateY = (svgHeight - adjustedHeight) / 2 - preCenterBounds.y * scale;
+
+                                    console.log(`[Export] DOM bounds scale adjust: ${domScaleAdjustment.toFixed(3)}, new scale ${scale.toFixed(3)}`);
+
+                                    this.applyTransformToTargets(transformTargets, translateX, translateY, scale);
+                                    await new Promise(resolve => requestAnimationFrame(resolve));
+                                    domBounds = this.measureDomNodeBounds(svgNodeFinal);
+                                }
+
+                                let domCorrectionNeeded = false;
+                                let domDeltaX = 0;
+                                let domDeltaY = 0;
+
+                                if (domBounds.x < contentPadding) {
+                                    domDeltaX = contentPadding - domBounds.x;
+                                    domCorrectionNeeded = true;
+                                } else if (domBounds.x + domBounds.width > svgWidth - contentPadding) {
+                                    domDeltaX = (svgWidth - contentPadding) - (domBounds.x + domBounds.width);
+                                    domCorrectionNeeded = true;
+                                }
+
+                                if (domBounds.y < contentPadding) {
+                                    domDeltaY = contentPadding - domBounds.y;
+                                    domCorrectionNeeded = true;
+                                } else if (domBounds.y + domBounds.height > svgHeight - contentPadding) {
+                                    domDeltaY = (svgHeight - contentPadding) - (domBounds.y + domBounds.height);
+                                    domCorrectionNeeded = true;
+                                }
+
+                                if (domCorrectionNeeded) {
+                                    translateX += domDeltaX;
+                                    translateY += domDeltaY;
+                                    console.log(`[Export] DOM bounds correction: deltaX=${domDeltaX.toFixed(0)}, deltaY=${domDeltaY.toFixed(0)}`);
+
+                                    this.applyTransformToTargets(transformTargets, translateX, translateY, scale);
+                                }
+                            }
+                        }
+
+                        this.disableSvgClipPaths(svgNodeFinal, effectiveCaptureWidth, effectiveCaptureHeight);
+
+                        // Wait for centering to settle
+                        await new Promise(resolve => requestAnimationFrame(() => {
+                            requestAnimationFrame(() => {
+                                requestAnimationFrame(resolve);
+                            });
+                        }));
+                        console.log('[Export] Layout and centering settled');
+
+                        this.injectNodeStyles(svgNodeFinal, resolvedCSS);
+                        this.forceSvgVisibility(svgNodeFinal);
+
+                        // Build overlay BEFORE measuring bounds so we can compute union
+                        const overlayResult = this.buildHtmlNodeOverlay(canvasDiv);
+                        const overlayElement = overlayResult?.overlay;
+                        const overlayCleanupFn = overlayResult?.cleanup;
+
+                        // Wait for overlay layout to settle
+                        await new Promise(resolve => requestAnimationFrame(() => {
+                            requestAnimationFrame(resolve);
+                        }));
+                        console.log('[Export] Overlay layout settled');
+
+                        // Measure SVG content bounds
+                        const svgBounds = this.measureSvgContentBounds(svgNodeFinal);
+                        console.log('[Export] SVG bounds:', JSON.stringify(svgBounds));
+
+                        // Measure overlay bounds and compute union
+                        const overlayBounds = this.measureOverlayBounds(overlayElement, svgNodeFinal);
+                        const rawBounds = this.computeUnionBounds(svgBounds, overlayBounds);
+                        console.log('[Export] Union bounds:', JSON.stringify(rawBounds));
+
+                        // Add padding with asymmetric "bleed" for text/box-shadow
+                        // Do NOT clamp to 0 - cropImageToBounds handles negative coords safely
+                        const basePadding = 20;
+                        const extra = { left: 12, right: 12, top: 10, bottom: 20 }; // Extra bleed for edge cases
+
+                        let contentBounds = {
+                            x: rawBounds.x - basePadding - extra.left,
+                            y: rawBounds.y - basePadding - extra.top,
+                            width: rawBounds.width + (basePadding * 2) + extra.left + extra.right,
+                            height: rawBounds.height + (basePadding * 2) + extra.top + extra.bottom,
+                            originalWidth: rawBounds.originalWidth,
+                            originalHeight: rawBounds.originalHeight,
+                            margin: rawBounds.margin
+                        };
+                        console.log('[Export] Content bounds with padding:', JSON.stringify(contentBounds));
+
+                        // Guard against invalid bounds
+                        if (contentBounds.width <= 0 || contentBounds.height <= 0) {
+                            console.warn(`[Export] Content bounds invalid (${contentBounds.width}×${contentBounds.height}), using raw bounds`);
+                            contentBounds = {
+                                x: rawBounds.x - basePadding,
+                                y: rawBounds.y - basePadding,
+                                width: rawBounds.width + (basePadding * 2),
+                                height: rawBounds.height + (basePadding * 2),
+                                originalWidth: rawBounds.originalWidth,
+                                originalHeight: rawBounds.originalHeight,
+                                margin: rawBounds.margin
+                            };
+                            console.log('[Export] Fallback bounds:', JSON.stringify(contentBounds));
+                        }
+
+                        // Define page insets (margins for legibility while maximizing chart area)
+                        // IMPORTANT: Must EXACTLY match export-template.js insets for consistent scale calculation
+                        // Page: 1680×947pt landscape (16:9)
+                        const pageWidth = config.page?.widthPt || 1680;
+                        const pageHeight = config.page?.heightPt || 947;
+
+                        // Use conservative top inset to account for optional department taglines
+                        // This matches export-template.js which uses 130 when tagline present, 120 otherwise
+                        const insets = {
+                            left: 60,    // Space for page edge
+                            right: 60,   // Space for page edge
+                            top: 130,    // Space for title + optional tagline (conservative)
+                            bottom: 60   // Space for footer
+                        };
+
+                        const availableWidth = pageWidth - insets.left - insets.right;   // ~1560pt
+                        const availableHeight = pageHeight - insets.top - insets.bottom; // ~757pt
+
+                        // Compute optimal scale to fill 98% of available area (maximize page usage)
+                        const scaleInfo = this.computeOptimalScale(
+                            contentBounds,
+                            availableWidth,
+                            availableHeight,
+                            0.98  // Fill 98% for maximum page usage (reduced whitespace)
+                        );
+
+                        // Check if scale is too small - if so, grow the page to maintain readability
+                        const pageSizeInfo = this.computePageSizeForMinScale(
+                            contentBounds,
+                            scaleInfo,
+                            { width: pageWidth, height: pageHeight },
+                            insets
+                        );
+
+                        // Use the effective scale (either original or resized for readability)
+                        const effectiveScale = pageSizeInfo.wasResized ? pageSizeInfo : scaleInfo;
+
+                        console.log(`[Export] Chart "${chartData.chartName || chartData.name}": content ${Math.round(contentBounds.width)}×${Math.round(contentBounds.height)}px, scale ${effectiveScale.scale.toFixed(2)}x ${pageSizeInfo.wasResized ? '(page resized for readability)' : 'to fill page'}`);
+
+                        // Diagnostic: Check bounds vs capture area overlap
+                        const captureArea = effectiveCaptureWidth * effectiveCaptureHeight;
+                        const boundsArea = contentBounds.width * contentBounds.height;
+                        const boundsInCapture = (
+                            contentBounds.x >= 0 &&
+                            contentBounds.y >= 0 &&
+                            contentBounds.x + contentBounds.width <= effectiveCaptureWidth &&
+                            contentBounds.y + contentBounds.height <= effectiveCaptureHeight
+                        );
+                        console.log(`[Export] Bounds check: ${boundsInCapture ? 'INSIDE' : 'OUTSIDE/PARTIAL'} capture area (${effectiveCaptureWidth}×${effectiveCaptureHeight}px)`);
+                        console.log(`[Export] Bounds area: ${(boundsArea / captureArea * 100).toFixed(1)}% of capture area`);
+
+                        try {
+                            const base64Image = await this.captureChartImage(
+                                tempChart,
+                                canvasDiv,
+                                this.exportQuality.scale,
+                                effectiveCaptureWidth,
+                                effectiveCaptureHeight,
+                                { overlayAlreadyBuilt: true } // Overlay built earlier for union bounds
+                            );
+
+                            if (!base64Image) {
+                                throw new Error('Chart capture failed');
+                            }
+
+                            // Validate bounds before cropping
+                            const boundsValid = contentBounds &&
+                                Number.isFinite(contentBounds.x) &&
+                                Number.isFinite(contentBounds.y) &&
+                                Number.isFinite(contentBounds.width) &&
+                                Number.isFinite(contentBounds.height) &&
+                                contentBounds.width > 0 &&
+                                contentBounds.height > 0;
+
+                            console.log('[Export] Bounds valid:', boundsValid);
+                            console.log('[Export] Base64 image length:', base64Image?.length || 0);
+
+                            // Crop image to content bounds to remove whitespace
+                            // Pass exportQuality.scale to convert SVG bounds to raster pixel coordinates
+                            // If bounds are invalid, cropImageToBounds will return the original image
+                            const cropBounds = boundsValid ? contentBounds : {
+                                x: 0,
+                                y: 0,
+                                width: contentBounds?.originalWidth || effectiveCaptureWidth,
+                                height: contentBounds?.originalHeight || effectiveCaptureHeight
+                            };
+                            console.log('[Export] Crop bounds:', JSON.stringify(cropBounds));
+
+                            const croppedResult = await this.cropImageToBounds(
+                                base64Image,
+                                cropBounds,
+                                this.exportQuality.scale
+                            );
+
+                            console.log('[Export] Cropped result:', croppedResult ? `${croppedResult.width}×${croppedResult.height}` : 'null');
+
+                            if (!boundsValid) {
+                                console.warn('[Export] Invalid content bounds, using full image:', contentBounds);
+                            }
+
+                            // Primary image: PNG for high-quality display and PDF (crisp lines)
+                            // Using smaller viewport (1600×900) to keep PNG size under jsPDF string limit
+                            const compressedImage = await this.compressImage(
+                                croppedResult.dataUrl,
+                                this.exportQuality.compression,
+                                'PNG'  // Always PNG for line fidelity
+                            );
+
+                            const previewImage = await this.resizeImageDataUrl(
+                                compressedImage,
+                                config.images?.previewWidthPx || 800
+                            );
+
+                            const svgMarkup = svgNodeFinal ? this.serializeSvg(svgNodeFinal, resolvedCSS) : null;
+
+                            // Use cropped dimensions for accurate PDF placement
+                            resolve({
+                                primary: {
+                                    dataUrl: compressedImage,
+                                    format: 'PNG',
+                                    width: croppedResult.width,
+                                    height: croppedResult.height
+                                },
+                                preview: previewImage,
+                                svg: svgMarkup,
+                                // Include bounds and effective scale metadata for PDF placement
+                                // effectiveScale is either the optimal scale or MIN_SCALE if page was resized
+                                bounds: contentBounds,
+                                scale: effectiveScale,
+                                // Include page size information for variable-sized PDF pages
+                                pageSize: pageSizeInfo
+                            });
+                        } finally {
+                            // Clean up overlay
+                            if (typeof overlayCleanupFn === 'function') {
+                                overlayCleanupFn();
+                            }
+                            tempChart.clear();
+                            canvasDiv.remove();
+                        }
                     })
                     .catch((waitError) => {
                         // Clean up on error too
                         try {
+                            if (typeof overlayCleanupFn === 'function') {
+                                overlayCleanupFn();
+                            }
                             tempChart.clear();
                         } catch (e) {
                             // Ignore cleanup errors
@@ -952,9 +1798,350 @@ class BulkExportManager {
     }
 
     /**
+     * Capture chart as a raster image, preferring DOM capture for foreignObject content.
+     * FIX: Move container off-screen instead of using opacity:0 which can produce blank captures.
+     * @param {Object} options - Optional settings
+     * @param {boolean} options.overlayAlreadyBuilt - Skip building overlay if already built
+     */
+    async captureChartImage(tempChart, canvasDiv, scale, captureWidth, captureHeight, options = {}) {
+        if (typeof html2canvas === 'function') {
+            console.log('[Export] Using html2canvas capture path');
+            const container = document.getElementById('bulk-export-container');
+            const previousStyles = container ? {
+                visibility: container.style.visibility,
+                overflow: container.style.overflow,
+                width: container.style.width,
+                height: container.style.height,
+                left: container.style.left,
+                top: container.style.top,
+                opacity: container.style.opacity,
+                zIndex: container.style.zIndex,
+                position: container.style.position
+            } : null;
+
+            if (container) {
+                // FIX: Keep opacity at 1 and visibility visible for proper html2canvas capture
+                // Move container off-screen using negative position instead of opacity:0
+                container.style.position = 'fixed';
+                container.style.visibility = 'visible';
+                container.style.overflow = 'visible';
+                container.style.width = `${captureWidth}px`;
+                container.style.height = `${captureHeight}px`;
+                // Position off-screen but keep opacity=1 so html2canvas renders correctly
+                container.style.left = `-${captureWidth + 100}px`;
+                container.style.top = '0';
+                container.style.opacity = '1';  // CRITICAL: Must be 1 for html2canvas
+                container.style.zIndex = '-9999';
+            }
+
+            // Skip overlay building if already built earlier (for union bounds measurement)
+            let overlayCleanup = null;
+            if (!options.overlayAlreadyBuilt) {
+                const overlayResult = this.buildHtmlNodeOverlay(canvasDiv);
+                overlayCleanup = overlayResult?.cleanup;
+            }
+
+            try {
+                // Wait for all fonts to be loaded before capture to avoid fallback font rendering
+                if (document.fonts && document.fonts.ready) {
+                    await document.fonts.ready;
+                    console.log('[Export] Fonts loaded, proceeding with capture');
+                }
+
+                const canvas = await html2canvas(canvasDiv, {
+                    backgroundColor: '#ffffff',
+                    scale,
+                    useCORS: true,
+                    logging: false,
+                    foreignObjectRendering: false
+                });
+                console.log(`[Export] html2canvas captured: ${canvas.width}×${canvas.height}px`);
+                return canvas.toDataURL('image/png', 0.95);
+            } catch (error) {
+                console.warn('[Export] html2canvas capture failed, falling back to SVG export', error);
+            } finally {
+                if (typeof overlayCleanup === 'function') {
+                    overlayCleanup();
+                }
+                if (container && previousStyles) {
+                    container.style.position = previousStyles.position;
+                    container.style.visibility = previousStyles.visibility;
+                    container.style.overflow = previousStyles.overflow;
+                    container.style.width = previousStyles.width;
+                    container.style.height = previousStyles.height;
+                    container.style.left = previousStyles.left;
+                    container.style.top = previousStyles.top;
+                    container.style.opacity = previousStyles.opacity;
+                    container.style.zIndex = previousStyles.zIndex;
+                }
+            }
+        }
+
+        console.log('[Export] Using SVG exportImg fallback path');
+        return new Promise((resolve) => {
+            tempChart.exportImg({
+                full: false,
+                save: false,
+                scale,
+                onLoad: resolve
+            });
+        });
+    }
+
+    /**
+     * Build an HTML overlay that positions node content over the SVG.
+     * FIX: Uses getBoundingClientRect() for accurate DOM-space positioning
+     * instead of fragile regex transform parsing.
+     */
+    buildHtmlNodeOverlay(canvasDiv) {
+        const svgNode = canvasDiv.querySelector('svg');
+        if (!svgNode || typeof d3 === 'undefined') {
+            console.log('[Overlay] No SVG or d3 available, skipping overlay');
+            return null;
+        }
+
+        const nodes = svgNode.querySelectorAll('g.node');
+        if (!nodes.length) {
+            console.log('[Overlay] No nodes found, skipping overlay');
+            return null;
+        }
+
+        const renderer = this.getNodeRenderer();
+
+        // Get SVG's bounding rect for relative positioning
+        const svgRect = svgNode.getBoundingClientRect();
+        const canvasRect = canvasDiv.getBoundingClientRect();
+        const svgWidth = svgRect.width || parseInt(svgNode.getAttribute('width')) || 2000;
+        const svgHeight = svgRect.height || parseInt(svgNode.getAttribute('height')) || 1128;
+
+        console.log(`[Overlay] Building overlay for ${nodes.length} nodes, SVG: ${svgWidth}×${svgHeight}`);
+
+        const overlay = document.createElement('div');
+        overlay.className = 'export-node-overlay';
+        overlay.style.cssText = `
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: ${svgWidth}px;
+            height: ${svgHeight}px;
+            pointer-events: none;
+        `;
+
+        // Hide foreignObjects to avoid duplicate rendering
+        const foreignObjects = Array.from(svgNode.querySelectorAll('foreignObject'));
+        const previousDisplays = new Map();
+        foreignObjects.forEach((fo) => {
+            previousDisplays.set(fo, fo.style.display);
+            fo.style.display = 'none';
+        });
+
+        // Get SVG CTM for consistent coordinate transforms
+        const svgCTM = svgNode.getScreenCTM();
+        const svgCTMInverse = svgCTM ? svgCTM.inverse() : null;
+
+        nodes.forEach((nodeEl) => {
+            const datum = d3.select(nodeEl).datum();
+            if (!datum) {
+                return;
+            }
+
+            // Get node dimensions from datum
+            const nodeWidth = datum.width || 250;
+            const nodeHeight = datum.height || 150;
+
+            // FIX: Use getBoundingClientRect for accurate DOM positioning
+            // This automatically accounts for ALL transforms (chart, center-group, node)
+            const nodeRect = nodeEl.getBoundingClientRect();
+
+            // Position relative to the SVG element (which is at the origin of canvasDiv)
+            const finalX = nodeRect.left - svgRect.left;
+            const finalY = nodeRect.top - svgRect.top;
+            const finalWidth = nodeRect.width;
+            const finalHeight = nodeRect.height;
+
+            // Fallback: if getBoundingClientRect returns invalid values, use CTM
+            if (!Number.isFinite(finalX) || !Number.isFinite(finalY) || finalWidth <= 0 || finalHeight <= 0) {
+                console.warn('[Overlay] Invalid rect for node, skipping');
+                return;
+            }
+
+            const nodeWrapper = document.createElement('div');
+            // FIX: Use fixed height from measured layout to match link positions
+            // The two-pass measurement ensures datum.height reflects actual text wrap height
+            nodeWrapper.style.cssText = `
+                position: absolute;
+                left: ${finalX}px;
+                top: ${finalY}px;
+                width: ${finalWidth}px;
+                height: ${finalHeight}px;
+                overflow: visible;
+                pointer-events: none;
+            `;
+
+            // Render at logical size - height already accounts for wrapped text via measurement pass
+            nodeWrapper.innerHTML = renderer.renderNodeContent(datum);
+            overlay.appendChild(nodeWrapper);
+        });
+
+        canvasDiv.appendChild(overlay);
+        console.log(`[Overlay] Created overlay with ${overlay.children.length} node wrappers`);
+
+        // Return both overlay element (for bounds measurement) and cleanup function
+        return {
+            overlay,
+            cleanup: () => {
+                overlay.remove();
+                foreignObjects.forEach((fo) => {
+                    fo.style.display = previousDisplays.get(fo) || '';
+                });
+            }
+        };
+    }
+
+    /**
+     * Crop image to content bounds to remove whitespace
+     * @param {string} base64Image - Base64 data URL
+     * @param {object} bounds - Content bounds in SVG units {x, y, width, height}
+     * @param {number} scale - Export scale factor (e.g., 1.5 or 2.0) to convert SVG units to raster pixels
+     * @returns {Promise<object>} Cropped image data: {dataUrl, width, height}
+     */
+    async cropImageToBounds(base64Image, bounds, scale) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                console.log(`[Crop] Image loaded: ${img.width}×${img.height}, scale=${scale}`);
+                console.log(`[Crop] Input bounds:`, JSON.stringify(bounds));
+
+                // Convert SVG bounds to raster pixel coordinates by applying scale factor
+                const scaledX = bounds.x * scale;
+                const scaledY = bounds.y * scale;
+                const scaledWidth = bounds.width * scale;
+                const scaledHeight = bounds.height * scale;
+
+                console.log(`[Crop] Scaled coords: x=${scaledX}, y=${scaledY}, w=${scaledWidth}, h=${scaledHeight}`);
+
+                if (!Number.isFinite(scaledX) || !Number.isFinite(scaledY) || !Number.isFinite(scaledWidth) || !Number.isFinite(scaledHeight)) {
+                    console.warn('[Export] Invalid bounds values, returning original image');
+                    resolve({
+                        dataUrl: base64Image,
+                        width: img.width,
+                        height: img.height
+                    });
+                    return;
+                }
+
+                const scaledMaxX = scaledX + scaledWidth;
+                const scaledMaxY = scaledY + scaledHeight;
+
+                // Guard rail: If bounds are completely outside image, skip cropping
+                if (scaledMaxX <= 0 || scaledMaxY <= 0 || scaledX >= img.width || scaledY >= img.height) {
+                    console.warn('[Crop] Bounds completely outside image, skipping crop');
+                    resolve({
+                        dataUrl: base64Image,
+                        width: img.width,
+                        height: img.height
+                    });
+                    return;
+                }
+
+                // Guard rail: If bounds are suspiciously small (< 5% of image), likely an error - skip crop
+                const boundsArea = scaledWidth * scaledHeight;
+                const imageArea = img.width * img.height;
+                const boundsRatio = boundsArea / imageArea;
+
+                if (boundsRatio < 0.05) {
+                    console.warn(`[Crop] Bounds suspiciously small (${(boundsRatio * 100).toFixed(1)}% of image), likely calculation error - skipping crop`);
+                    resolve({
+                        dataUrl: base64Image,
+                        width: img.width,
+                        height: img.height
+                    });
+                    return;
+                }
+
+                // Guard rail: If bounds are extremely large (> 150% of image), likely an error - skip crop
+                if (boundsRatio > 1.5) {
+                    console.warn(`[Crop] Bounds larger than image (${(boundsRatio * 100).toFixed(1)}% of image), likely calculation error - skipping crop`);
+                    resolve({
+                        dataUrl: base64Image,
+                        width: img.width,
+                        height: img.height
+                    });
+                    return;
+                }
+
+                // Preserve desired bounds size, pad with white if bounds extend outside the image
+                const destX = Math.max(0, Math.ceil(-scaledX));
+                const destY = Math.max(0, Math.ceil(-scaledY));
+                const destWidth = Math.ceil(scaledWidth);
+                const destHeight = Math.ceil(scaledHeight);
+
+                const sourceX = Math.max(0, scaledX);
+                const sourceY = Math.max(0, scaledY);
+                const sourceWidth = Math.min(img.width - sourceX, destWidth - destX);
+                const sourceHeight = Math.min(img.height - sourceY, destHeight - destY);
+
+                if (!Number.isFinite(destWidth) || !Number.isFinite(destHeight) || destWidth <= 0 || destHeight <= 0) {
+                    console.warn(`[Export] Invalid destination dimensions (${destWidth}x${destHeight}), returning original image`);
+                    resolve({
+                        dataUrl: base64Image,
+                        width: img.width,
+                        height: img.height
+                    });
+                    return;
+                }
+
+                // Guard against invalid source dimensions
+                if (sourceWidth <= 0 || sourceHeight <= 0) {
+                    console.warn(`[Export] Invalid crop dimensions (${sourceWidth}x${sourceHeight}), returning original image`);
+                    resolve({
+                        dataUrl: base64Image,
+                        width: img.width,
+                        height: img.height
+                    });
+                    return;
+                }
+
+                // Return content-sized snapshot (no fixed viewport)
+                // Page sizing is handled in export-template.js for consistent scale calculations
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(destWidth);
+                canvas.height = Math.round(destHeight);
+
+                const ctx = canvas.getContext('2d');
+
+                // Fill with white background
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Draw cropped content
+                console.log(`[Crop] Drawing image: src(${sourceX}, ${sourceY}, ${sourceWidth}, ${sourceHeight}) -> dest(${destX}, ${destY}, ${sourceWidth}, ${sourceHeight})`);
+                ctx.drawImage(
+                    img,
+                    sourceX, sourceY,        // Source position (in raster pixels)
+                    sourceWidth, sourceHeight, // Source size (in raster pixels)
+                    destX, destY,              // Destination position
+                    sourceWidth, sourceHeight  // Destination size
+                );
+
+                // Convert to base64 and return with content dimensions
+                const result = {
+                    dataUrl: canvas.toDataURL('image/png', 0.95),
+                    width: Math.round(destWidth),
+                    height: Math.round(destHeight)
+                };
+                console.log(`[Crop] Returning content-sized image: ${result.width}×${result.height}`);
+                resolve(result);
+            };
+            img.onerror = reject;
+            img.src = base64Image;
+        });
+    }
+
+    /**
      * Compress image to reduce file size
      */
-    async compressImage(base64Image, quality = 0.8) {
+    async compressImage(base64Image, quality = 0.8, format = 'JPEG') {
         return new Promise((resolve) => {
             const img = new Image();
             img.onload = () => {
@@ -967,8 +2154,9 @@ class BulkExportManager {
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(img, 0, 0);
 
-                // Convert to JPEG with compression
-                const compressed = canvas.toDataURL('image/jpeg', quality);
+                // Use PNG for sharper text/lines (no compression artifacts), JPEG for smaller files
+                const mimeType = format === 'PNG' ? 'image/png' : 'image/jpeg';
+                const compressed = canvas.toDataURL(mimeType, quality);
                 resolve(compressed);
             };
             img.onerror = () => {
@@ -1063,6 +2251,28 @@ class BulkExportManager {
         }
     }
 
+    forceSvgVisibility(svgNode) {
+        if (!svgNode) return;
+        try {
+            const visibleElements = svgNode.querySelectorAll('g.node, path.link, path.connection');
+            visibleElements.forEach((el) => {
+                el.style.opacity = '1';
+                el.setAttribute('opacity', '1');
+            });
+
+            const foreignObjects = svgNode.querySelectorAll('foreignObject');
+            foreignObjects.forEach((fo) => {
+                if (fo.style.display === 'none') {
+                    fo.style.display = '';
+                }
+                fo.style.visibility = 'visible';
+                fo.style.opacity = '1';
+            });
+        } catch (error) {
+            console.warn('Failed to force SVG visibility', error);
+        }
+    }
+
     /**
      * Extract org-chart-node styles from the full stylesheet using CSS parser
      * This is more robust than line-by-line parsing and handles complex selectors
@@ -1113,20 +2323,17 @@ class BulkExportManager {
 
     prepareChartNodes(chartData) {
         const nodes = Array.isArray(chartData.nodes) ? chartData.nodes : [];
-        const viewState = chartData.viewState || {};
-        const collapsedSet = new Set(
-            Array.isArray(viewState.collapsedNodes) ? viewState.collapsedNodes : []
-        );
 
+        // Force full expansion for exports - ignore viewState.collapsedNodes
+        // This ensures all charts export with the complete tree visible, regardless of
+        // how the user had the chart collapsed when saving
         return nodes.map(node => {
-            const explicit = typeof node._expanded === 'boolean' ? node._expanded : null;
-            const shouldExpand = node.parentId ? !collapsedSet.has(node.id) : true;
             return {
                 id: node.id,
                 parentId: node.parentId || '',
                 members: node.members || [],
                 meta: node.meta || {},
-                _expanded: explicit !== null ? explicit : shouldExpand,
+                _expanded: true,  // Always expand for exports
                 name: node.name,
                 title: node.title,
                 department: node.department || (node.meta && node.meta.department)
@@ -1315,6 +2522,23 @@ class BulkExportManager {
             };
         });
 
+        // Compute global max page size from all captured charts
+        // This ensures ALL pages (covers + charts) use the same dimensions - no cropping
+        const defaultWidth = config.page.widthPt;
+        const defaultHeight = config.page.heightPt;
+        let maxPageWidth = defaultWidth;
+        let maxPageHeight = defaultHeight;
+
+        this.capturedCharts.forEach(c => {
+            const ps = c.snapshot?.pageSize;
+            if (ps?.wasResized) {
+                maxPageWidth = Math.max(maxPageWidth, ps.pageWidth);
+                maxPageHeight = Math.max(maxPageHeight, ps.pageHeight);
+            }
+        });
+
+        console.log(`[Export] Global page size: ${Math.round(maxPageWidth)}×${Math.round(maxPageHeight)}pt (default: ${defaultWidth}×${defaultHeight}pt)`);
+
         // Group charts by coverId
         const coverOrder = coverImageMapping?.coverOrder || [];
         const chartGroups = new Map(); // Map<coverId, charts[]>
@@ -1391,10 +2615,11 @@ class BulkExportManager {
             console.log(`[Export] Skipping first group cover to avoid duplicate (both use ${documentCover})`);
         }
 
+        // Initialize jsPDF with global max page size (ensures all pages are same size)
         const pdf = new jsPDF({
             orientation: 'l',
             unit: 'pt',
-            format: [config.page.widthPt, config.page.heightPt]
+            format: [maxPageWidth, maxPageHeight]
         });
 
         let pageNumber = 1;
@@ -1443,6 +2668,7 @@ class BulkExportManager {
 
             // Render all charts in this group
             for (const captured of groupCharts) {
+                // All pages use global max size (no custom dimensions per chart)
                 pdf.addPage();
                 pageNumber += 1;
                 await ExportTemplate.drawDepartmentPage(
@@ -1693,8 +2919,8 @@ class BulkExportManager {
 
             console.log(`[Debug] Found chart: "${chart.chartName}"`);
 
-            // Set quality to high for preview
-            this.exportQuality = { scale: 2.0, compression: 0.9 };
+            // Set quality to high for preview (PNG to avoid JPEG artifacts)
+            this.exportQuality = { scale: 2.0, compression: 0.9, format: 'PNG' };
 
             // Render the chart off-screen
             console.log('[Debug] Rendering chart off-screen...');

@@ -54,6 +54,16 @@
         pdf.addFont('Roboto-Regular.ttf', fonts.family, 'normal');
         pdf.addFileToVFS('Roboto-Bold.ttf', semiBase64);
         pdf.addFont('Roboto-Bold.ttf', fonts.family, 'bold');
+
+        const headingFonts = config.fonts.heading;
+        if (headingFonts && headingFonts.files) {
+            const headingRegularBase64 = await fetchFontBase64(headingFonts.files.regular);
+            const headingSemiBase64 = await fetchFontBase64(headingFonts.files.semibold);
+            pdf.addFileToVFS('SpaceGrotesk-Regular.ttf', headingRegularBase64);
+            pdf.addFont('SpaceGrotesk-Regular.ttf', headingFonts.family, 'normal');
+            pdf.addFileToVFS('SpaceGrotesk-SemiBold.ttf', headingSemiBase64);
+            pdf.addFont('SpaceGrotesk-SemiBold.ttf', headingFonts.family, 'bold');
+        }
         pdf.__exportTemplateFontsRegistered = true;
         return config;
     }
@@ -131,7 +141,7 @@
         });
     }
 
-    function renderSvgSnapshot(pdf, svgMarkup, area) {
+    function renderSvgSnapshot(pdf, svgMarkup, area, bounds = null, scaleInfo = null) {
         if (!window.svg2pdf || !svgMarkup) {
             return false;
         }
@@ -139,18 +149,58 @@
             const parser = new DOMParser();
             const doc = parser.parseFromString(svgMarkup, 'image/svg+xml');
             const svgElement = doc.documentElement;
-            svgElement.setAttribute('width', area.width);
-            svgElement.setAttribute('height', area.height);
-            if (!svgElement.getAttribute('viewBox')) {
-                const w = svgElement.getAttribute('width');
-                const h = svgElement.getAttribute('height');
-                svgElement.setAttribute('viewBox', `0 0 ${w} ${h}`);
+
+            // Use computed scale factors if available for optimal fill
+            let renderX, renderY, renderWidth, renderHeight, viewBox;
+            if (bounds && scaleInfo) {
+                // Apply optimal scaling to crop whitespace and fill page
+                renderWidth = scaleInfo.finalWidth;
+                renderHeight = scaleInfo.finalHeight;
+
+                // Smart positioning based on aspect ratio
+                const aspectRatio = renderWidth / renderHeight;
+
+                if (aspectRatio > 2.0) {
+                    // Extra-wide chart: anchor higher
+                    renderX = area.x + scaleInfo.offsetX;
+                    renderY = area.y + Math.min(scaleInfo.offsetY, 20);
+                } else if (aspectRatio < 0.8) {
+                    // Tall chart: center horizontally, anchor near top
+                    renderX = area.x + (area.width - renderWidth) / 2;
+                    renderY = area.y + 20;
+                } else {
+                    // Balanced chart: center both axes
+                    renderX = area.x + scaleInfo.offsetX;
+                    renderY = area.y + scaleInfo.offsetY;
+                }
+
+                // Set viewBox to crop to content bounds
+                viewBox = `${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`;
+                console.log(`[Export] SVG viewBox cropped to content: ${viewBox}, scaled ${scaleInfo.scale.toFixed(2)}x [AR: ${aspectRatio.toFixed(2)}]`);
+            } else {
+                // Fallback to old behavior
+                renderX = area.x;
+                renderY = area.y;
+                renderWidth = area.width;
+                renderHeight = area.height;
+                if (!svgElement.getAttribute('viewBox')) {
+                    const w = svgElement.getAttribute('width');
+                    const h = svgElement.getAttribute('height');
+                    viewBox = `0 0 ${w} ${h}`;
+                } else {
+                    viewBox = svgElement.getAttribute('viewBox');
+                }
             }
+
+            svgElement.setAttribute('width', renderWidth);
+            svgElement.setAttribute('height', renderHeight);
+            svgElement.setAttribute('viewBox', viewBox);
+
             window.svg2pdf(svgElement, pdf, {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: area.height,
+                x: renderX,
+                y: renderY,
+                width: renderWidth,
+                height: renderHeight,
                 preserveAspectRatio: 'xMidYMid meet'
             });
             return true;
@@ -228,26 +278,30 @@
 
     async function drawDepartmentPage(pdf, department, snapshot, meta = {}) {
         const config = await registerExportFonts(pdf);
+
+        // Use actual PDF page dimensions (global max size set by assemblePDF)
+        // This ensures all pages are the same size - no custom sizing per chart
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+
         pdf.setFillColor(config.palette.background);
-        pdf.rect(0, 0, config.page.widthPt, config.page.heightPt, 'F');
+        pdf.rect(0, 0, pageWidth, pageHeight, 'F');
         pdf.setTextColor(config.palette.text);
 
-        pdf.setFont(config.fonts.primary.family, 'bold');
-        pdf.setFontSize(config.fonts.primary.scalePt.h1);
-        pdf.text(department.name || 'Department', config.page.marginsPt.left, 100);
+        // Define content area with minimal insets to maximize chart visibility
+        const insets = {
+            left: 60,
+            right: 60,
+            top: 130,  // Space for title + optional tagline
+            bottom: 60
+        };
 
-        if (department.tagline) {
-            pdf.setFont(config.fonts.primary.family, 'normal');
-            pdf.setFontSize(config.fonts.primary.scalePt.body);
-            pdf.text(department.tagline, config.page.marginsPt.left, 130);
-        }
+        const availableWidth = pageWidth - insets.left - insets.right;
+        const availableHeight = pageHeight - insets.top - insets.bottom;
 
-        const chartMarginTop = department.tagline ? 150 : 140;
-        const availableWidth = config.page.widthPt - config.page.marginsPt.left - config.page.marginsPt.right;
-        const availableHeight = config.page.heightPt - chartMarginTop - config.footer.heightPt - 40;
         const chartArea = {
-            x: config.page.marginsPt.left,
-            y: chartMarginTop,
+            x: insets.left,
+            y: insets.top,
             width: availableWidth,
             height: availableHeight
         };
@@ -255,48 +309,71 @@
         let rendered = false;
         let renderMethod = 'none';
 
-        // Attempt SVG rendering first (vector, high quality)
-        if (snapshot?.svg && window.svg2pdf) {
+        // Prefer raster rendering for PDFs (more reliable for HTML-based org chart nodes)
+        // SVG rendering disabled to avoid svg2pdf issues with complex HTML foreignObject elements
+        // If SVG is needed in the future, set PREFER_SVG_EXPORT = true
+        const PREFER_SVG_EXPORT = false;
+
+        if (PREFER_SVG_EXPORT && snapshot?.svg && window.svg2pdf) {
             console.log(`[Export] Attempting SVG render for "${department.name}"`);
-            rendered = renderSvgSnapshot(pdf, snapshot.svg, chartArea);
+            rendered = renderSvgSnapshot(pdf, snapshot.svg, chartArea, snapshot.bounds, snapshot.scale);
             if (rendered) {
                 renderMethod = 'svg';
                 console.log(`[Export] ✓ Successfully rendered "${department.name}" as SVG (vector)`);
             } else {
                 console.warn(`[Export] ✗ SVG render failed for "${department.name}", falling back to raster`);
             }
-        } else {
-            if (!snapshot?.svg) {
-                console.warn(`[Export] No SVG snapshot available for "${department.name}"`);
-            }
-            if (!window.svg2pdf) {
-                console.warn('[Export] svg2pdf library not loaded, cannot use SVG rendering');
-            }
         }
 
-        // Fallback to raster image (JPEG/PNG)
+        // Use raster image (PNG) - primary export method
+        // PNG preserves line fidelity; reduced scale (1.5x) keeps size under jsPDF string limit
         if (!rendered) {
             const imageVariant = snapshot?.primary || snapshot?.preview;
             if (imageVariant?.dataUrl) {
                 console.log(`[Export] Using ${imageVariant.format || 'raster'} image for "${department.name}"`);
-                const aspect = imageVariant.width && imageVariant.height
-                    ? imageVariant.width / imageVariant.height
-                    : config.images.targetAspect;
-                let renderWidth = chartArea.width;
-                let renderHeight = renderWidth / aspect;
-                if (renderHeight > chartArea.height) {
-                    renderHeight = chartArea.height;
-                    renderWidth = renderHeight * aspect;
-                }
+
+                // Always compute scale from image dimensions to fit actual chartArea
+                // (precomputed snapshot.scale may not match global page size)
+                const snapshotWidth = imageVariant.width || snapshot?.bounds?.width || chartArea.width;
+                const snapshotHeight = imageVariant.height || snapshot?.bounds?.height || chartArea.height;
+
+                // Scale to fit within chart area with 98% fill for maximum page usage
+                const scaleX = chartArea.width / snapshotWidth;
+                const scaleY = chartArea.height / snapshotHeight;
+                const scale = Math.min(scaleX, scaleY) * 0.98;
+
+                const renderWidth = snapshotWidth * scale;
+                const renderHeight = snapshotHeight * scale;
+
+                // Center the chart in available area
                 const x = chartArea.x + (chartArea.width - renderWidth) / 2;
+                const y = chartArea.y + (chartArea.height - renderHeight) / 2;
+
+                console.log(`[Export] Scale ${scale.toFixed(2)}x: ${Math.round(snapshotWidth)}×${Math.round(snapshotHeight)}px → ${Math.round(renderWidth)}×${Math.round(renderHeight)}pt at (${Math.round(x)}, ${Math.round(y)})`);
+
+
                 pdf.addImage(
                     imageVariant.dataUrl,
                     imageVariant.format || 'PNG',
                     x,
-                    chartArea.y,
+                    y,
                     renderWidth,
                     renderHeight
                 );
+
+                // Draw title and tagline AFTER chart to ensure they appear on top (PDF z-order)
+                const headingFontFamily = config.fonts.heading?.family || config.fonts.primary.family;
+                const headingX = pageWidth / 2;
+                pdf.setFont(headingFontFamily, 'bold');
+                pdf.setFontSize(config.fonts.primary.scalePt.h1);
+                pdf.text(department.name || 'Department', headingX, 100, { align: 'center' });
+
+                if (department.tagline) {
+                    pdf.setFont(config.fonts.primary.family, 'normal');
+                    pdf.setFontSize(config.fonts.primary.scalePt.body);
+                    pdf.text(department.tagline, headingX, 130, { align: 'center' });
+                }
+
                 rendered = true;
                 renderMethod = imageVariant.format?.toLowerCase() || 'raster';
                 console.log(`[Export] ✓ Successfully rendered "${department.name}" as ${renderMethod}`);
@@ -312,12 +389,74 @@
             pdf.rect(chartArea.x, chartArea.y, chartArea.width, chartArea.height);
             pdf.setFont(config.fonts.primary.family, 'normal');
             pdf.setFontSize(config.fonts.primary.scalePt.body);
-            pdf.text('Org chart snapshot pending…', config.page.widthPt / 2, chartArea.y + 40, {
+            pdf.text('Org chart snapshot pending…', pageWidth / 2, chartArea.y + 40, {
                 align: 'center',
             });
         }
 
-        drawFooter(pdf, config, meta.pageNumber || 3, meta.totalPages || 3, meta);
+        // Draw footer with actual page dimensions
+        const footerConfig = { ...config, page: { ...config.page, widthPt: pageWidth, heightPt: pageHeight } };
+        drawFooter(pdf, footerConfig, meta.pageNumber || 3, meta.totalPages || 3, meta);
+    }
+
+    /**
+     * Draw a full-page cover image (section divider)
+     * @param {jsPDF} pdf - PDF instance
+     * @param {string} imagePath - Path to the cover image
+     * @param {Object} meta - Metadata (pageNumber, totalPages, etc.)
+     */
+    async function drawCoverImagePage(pdf, imagePath, meta = {}) {
+        const config = await registerExportFonts(pdf);
+
+        // Use actual PDF page dimensions (supports global max page size)
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+
+        // Set background
+        pdf.setFillColor(config.palette.background);
+        pdf.rect(0, 0, pageWidth, pageHeight, 'F');
+
+        try {
+            // Fetch and add the cover image
+            const response = await fetch(imagePath);
+            if (!response.ok) {
+                throw new Error(`Failed to load cover image: ${response.statusText}`);
+            }
+
+            const blob = await response.blob();
+            const dataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+
+            // Add image to fill the entire page (uses actual page dimensions)
+            pdf.addImage(
+                dataUrl,
+                'PNG',
+                0,
+                0,
+                pageWidth,
+                pageHeight
+            );
+
+            console.log(`[Export] ✓ Added cover image: ${imagePath} (${Math.round(pageWidth)}×${Math.round(pageHeight)}pt)`);
+        } catch (error) {
+            console.error(`[Export] Failed to load cover image "${imagePath}":`, error);
+
+            // Fallback: display a placeholder
+            pdf.setFont(config.fonts.primary.family, 'bold');
+            pdf.setFontSize(config.fonts.primary.scalePt.h1);
+            pdf.setTextColor(config.palette.text);
+            pdf.text('Section Cover', pageWidth / 2, pageHeight / 2, {
+                align: 'center',
+            });
+        }
+
+        // Note: Cover images typically have their own footer/branding, so we skip drawFooter here
+        // If you want to add a footer, uncomment the line below:
+        // drawFooter(pdf, config, meta.pageNumber || 1, meta.totalPages || 1, meta);
     }
 
     global.ExportTemplate = {
@@ -326,6 +465,7 @@
         drawCoverPage,
         drawOverviewPage,
         drawDepartmentPage,
+        drawCoverImagePage,
         drawFooter,
     };
 })(window);

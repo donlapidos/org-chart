@@ -1,0 +1,190 @@
+# Backend Plan: Low-Code Architecture (Azure Static Web Apps)
+
+**Document Version:** 2.0 (SWA Pivot)
+**Last Updated:** January 2025
+**Purpose:** Define a simplified, high-impact backend strategy utilizing Azure Static Web Apps to minimize operational overhead while delivering robust Microsoft SSO and data persistence.
+
+---
+
+## 1. Executive Summary
+
+### The Strategic Pivot
+Based on the requirements to **integrate Microsoft SSO** and **store user-generated charts** without incurring high infrastructure maintenance costs, we are shifting from a "Heavy Infrastructure" model (VMs/Express.js) to a **"Low-Code Operations" model**.
+
+### The Solution: Azure Static Web Apps (SWA)
+We will utilize **Azure Static Web Apps** combined with **Azure Functions** and **Cosmos DB Serverless**. This architecture abstracts away 90% of server management, networking, and authentication complexity.
+
+**Why this fits:**
+1.  **Zero-Code Auth:** Microsoft SSO is built-in. No complex JWT validation logic required.
+2.  **Serverless Cost:** You pay only when a user saves or loads a chart. Idle cost is near zero.
+3.  **Unified Deployment:** Frontend and Backend live in one repository and deploy together.
+
+---
+
+## 2. Architecture Overview
+
+### High-Level Diagram
+```mermaid
+[Browser] <--> [Azure Static Web App (Hosting & Auth)] <--> [Azure Functions (API)] <--> [Cosmos DB Serverless]
+```
+
+### Component Breakdown
+
+| Component | Technology | Responsibility |
+| :--- | :--- | :--- |
+| **Frontend Hosting** | **Azure Static Web Apps** | Hosts your HTML/JS/CSS. Automatically handles SSL, global distribution, and serving the app. |
+| **Authentication** | **Built-in SWA Auth** | Handles login/logout with Azure Active Directory. Injects user identity into API headers. |
+| **Backend Logic** | **Azure Managed Functions** | Node.js functions that run only on-demand to handle API requests (Save/Load). |
+| **Database** | **Azure Cosmos DB** | NoSQL database (MongoDB API) running in **Serverless Mode** to store chart JSON. |
+
+---
+
+## 3. Implementation Detail: The "Zero-Code" Auth Flow
+
+We leverage the SWA standard authentication routes. No MSAL library configuration is strictly necessary for basic login, though MSAL can be used for advanced Graph scenarios if needed later.
+
+### 3.1 Frontend Workflow
+1.  **Login:** Link the user to `/.auth/login/aad`. Azure handles the redirect, consent, and callback.
+2.  **Check Session:** Fetch `/.auth/me` to get the current user's JSON profile (Email, User ID, Name).
+3.  **API Calls:** When making `fetch('/api/charts')` calls, no special token logic is needed. The browser sends the session cookie, and Azure translates this into secure headers for the backend.
+
+### 3.2 Backend Security (Trusting the Headers)
+Since the Azure platform handles authentication *before* the request reaches your function, your backend code is simple:
+
+```javascript
+// Example: Inside an Azure Function
+module.exports = async function (context, req) {
+    // Azure validates the user and provides these headers
+    // We can trust them implicitly because they are set by the platform
+    const userId = req.headers['x-ms-client-principal-id'];
+    const userEmail = req.headers['x-ms-client-principal-name'];
+
+    if (!userId) {
+        context.res = { status: 401, body: "Not logged in" };
+        return;
+    }
+
+    // Proceed to save/load data for this userId...
+}
+```
+
+---
+
+## 4. Folder Structure & Development
+
+This structure allows both frontend and backend to live in your existing project.
+
+```text
+/ (Project Root)
+├── /app                    <-- Your Existing Frontend
+│   ├── index.html
+│   ├── js/
+│   └── css/
+│
+├── /api                    <-- NEW: Backend Functions
+│   ├── /GetCharts
+│   │   ├── index.js        <-- Logic to fetch charts
+│   │   └── function.json   <-- Trigger config
+│   ├── /SaveChart
+│   │   ├── index.js        <-- Logic to create/update
+│   │   └── function.json
+│   └── /DeleteChart
+│       ├── index.js
+│       └── function.json
+│
+├── staticwebapp.config.json <-- NEW: Routing & Auth Rules
+└── package.json
+```
+
+### 4.1 Configuration File (`staticwebapp.config.json`)
+This file controls access. We can lock down the entire site or specific API routes.
+
+```json
+{
+  "routes": [
+    {
+      "route": "/api/*",
+      "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/login.html",
+      "rewrite": "/.auth/login/aad"
+    }
+  ],
+  "responseOverrides": {
+    "401": {
+      "redirect": "/.auth/login/aad"
+    }
+  }
+}
+```
+
+---
+
+## 5. Database Schema (Cosmos DB)
+
+We will use the **MongoDB API** for Cosmos DB because it works naturally with JSON documents and your existing data structure.
+
+**Collection:** `charts`
+
+**Document Structure:**
+```json
+{
+  "id": "unique-chart-uuid",
+  "ownerId": "azure-user-guid-from-header",  // Partition Key
+  "name": "Engineering Org 2025",
+  "lastModified": "2025-01-24T12:00:00Z",
+  "data": {
+    // ... The huge JSON blob generated by your D3 frontend ...
+    "nodes": [ ... ],
+    "connections": [ ... ]
+  }
+}
+```
+
+**Why OwnerId as Partition Key?**
+It optimizes performance. Queries like "Get all charts for User X" become incredibly fast and cheap because they only hit one specific logical partition.
+
+---
+
+## 6. Migration Steps
+
+### Phase 1: Local Development (1-2 Days)
+1.  Install **Azure Static Web Apps CLI** (`npm install -g @azure/static-web-apps-cli`).
+2.  Create the `/api` folder and a simple `hello` function.
+3.  Run `swa start app --api-location api` to simulate the full environment locally. SWA CLI provides a fake login screen for testing!
+
+### Phase 2: Database Setup (1 Hour)
+1.  Create an **Azure Cosmos DB for MongoDB** account in the Azure Portal.
+2.  Select **Serverless** capacity mode.
+3.  Get the Connection String.
+
+### Phase 3: Connect & Deploy (1 Day)
+1.  Push your code to GitHub.
+2.  Create a "Static Web App" resource in Azure Portal.
+3.  Link it to your GitHub repo. Azure will automatically create a GitHub Action to build/deploy.
+4.  Add your Cosmos DB Connection String to the **Configuration -> Application Settings** in Azure Portal.
+
+---
+
+## 7. Operational Costs (Estimate)
+
+| Service | Tier | Est. Cost (Low Traffic) | Est. Cost (High Traffic) |
+| :--- | :--- | :--- | :--- |
+| **Static Web App** | Free Tier | **$0.00** | $0.00 (bandwidth limits apply) |
+| **Functions** | Managed (Consumption) | **$0.00** (1M free grants) | ~$5.00/mo |
+| **Cosmos DB** | Serverless | **$0.30/mo** (Storage) | ~$5-20/mo (Ops dependent) |
+| **Total** | | **<$1.00 / month** | **~$25.00 / month** |
+
+*Note: Standard SWA plan ($9/mo) is required if you need custom authentication roles beyond simple "authenticated", or enterprise-grade SLA.*
+
+---
+
+## 8. Conclusion
+
+This **SWA + Serverless** architecture satisfies all critical requirements:
+1.  **Microsoft Credentials:** Native, zero-code integration.
+2.  **User-Generated Content:** Simple API to persist JSON blobs.
+3.  **Low Maintenance:** No OS patches, no server updates, no scaling configuration.
+
+It allows you to focus almost entirely on the Frontend D3.js experience while Azure handles the plumbing.

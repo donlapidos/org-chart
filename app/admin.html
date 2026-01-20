@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="assets/rrc-favicon.svg">
+    <link rel="icon" type="image/png" href="assets/rrc-favicon.png">
+    <title>Admin Panel - Org Chart</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <style>
+        :root {
+            --surface: #ffffff;
+            --surface-muted: #f4f6fb;
+            --border-subtle: #e4e7ec;
+            --text-primary: #1f2937;
+            --text-muted: #6b7280;
+            --pill-admin: #dc3545;
+            --pill-editor: #2563eb;
+            --pill-viewer: #16a34a;
+            --pill-pending: #f59e0b;
+            --pill-approved: #16a34a;
+            --pill-denied: #dc2626;
+            --shadow-soft: 0 12px 30px rgba(15, 23, 42, 0.08);
+        }
+
+        body {
+            background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+            color: var(--text-primary);
+        }
+
+        .admin-shell {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        .admin-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .admin-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .admin-header-actions .btn {
+            white-space: nowrap;
+        }
+
+        .admin-title-group h1 {
+            margin: 4px 0 6px;
+            font-size: 28px;
+            letter-spacing: -0.3px;
+        }
+
+        .admin-title-group p {
+            margin: 0;
+            color: var(--text-muted);
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .admin-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+            gap: 16px;
+        }
+
+        .admin-card {
+            background: var(--surface);
+            border-radius: 16px;
+            box-shadow: var(--shadow-soft);
+            padding: 20px 22px;
+            border: 1px solid rgba(255, 255, 255, 0.6);
+        }
+
+        .admin-card h2 {
+            margin: 0 0 8px;
+            font-size: 18px;
+        }
+
+        .admin-card p {
+            margin: 0 0 12px;
+            color: var(--text-muted);
+        }
+
+        .section-divider {
+            margin: 18px 0;
+            border: 0;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .grant-role-form {
+            display: grid;
+            grid-template-columns: 2fr 1fr auto;
+            gap: 10px;
+            align-items: center;
+            margin-top: 8px;
+        }
+
+        .user-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+        }
+
+        .user-table th,
+        .user-table td {
+            padding: 12px 10px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 14px;
+        }
+
+        .user-table th {
+            background-color: var(--surface-muted);
+            color: var(--text-muted);
+            font-weight: 700;
+            letter-spacing: 0.01em;
+        }
+
+        .role-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            color: #fff;
+        }
+
+        .role-badge.admin { background: var(--pill-admin); }
+        .role-badge.editor { background: var(--pill-editor); }
+        .role-badge.viewer { background: var(--pill-viewer); }
+
+        .access-requests-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .filter-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            background: var(--surface-muted);
+            border-radius: 12px;
+        }
+
+        .filter-group label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .access-request-card {
+            border: 1px solid var(--border-subtle);
+            border-radius: 14px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+            background: var(--surface);
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+        }
+
+        .access-request-card .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .status-pill,
+        .status {
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            color: #fff;
+        }
+
+        .status-pill.pending { background: var(--pill-pending); color: #1f2937; }
+        .status-pill.approved { background: var(--pill-approved); }
+        .status-pill.denied { background: var(--pill-denied); }
+        .status.pending { background: var(--pill-pending); color: #1f2937; display: inline-flex; align-items: center; }
+        .status.approved { background: var(--pill-approved); display: inline-flex; align-items: center; }
+        .status.denied { background: var(--pill-denied); display: inline-flex; align-items: center; }
+
+        .request-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 8px 12px;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .request-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            padding: 8px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+
+        .helper-text {
+            color: var(--text-muted);
+            font-size: 13px;
+            margin-top: 6px;
+        }
+
+        /* Inputs and selects aligned with dashboard look */
+        .admin-card .form-control,
+        .admin-card input[type="text"],
+        .admin-card select {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border-subtle);
+            background: #f8fafc;
+            font-size: 14px;
+            color: var(--text-primary);
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+        }
+
+        .admin-card .form-control:focus,
+        .admin-card input[type="text"]:focus,
+        .admin-card select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+            background: #ffffff;
+        }
+
+        .admin-card select {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-image:
+                linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+                linear-gradient(135deg, var(--text-muted) 50%, transparent 50%),
+                linear-gradient(to right, transparent, transparent);
+            background-position:
+                calc(100% - 16px) calc(50% - 3px),
+                calc(100% - 10px) calc(50% - 3px),
+                calc(100% - 2.5em) 0.5em;
+            background-size: 7px 7px, 7px 7px, 1px 1.5em;
+            background-repeat: no-repeat;
+            cursor: pointer;
+        }
+
+        .admin-card .btn.btn-primary {
+            border-radius: 10px;
+            padding: 10px 18px;
+            font-weight: 700;
+            box-shadow: 0 8px 18px rgba(99, 102, 241, 0.18);
+        }
+
+        /* Tabs */
+        .tab-bar {
+            display: inline-flex;
+            gap: 10px;
+            padding: 4px;
+            background: var(--surface-muted);
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+
+        .tab-button {
+            border: none;
+            background: transparent;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-weight: 700;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .tab-button.active {
+            background: var(--surface);
+            color: var(--text-primary);
+            box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+        }
+
+        .tab-content {
+            margin-top: 6px;
+        }
+
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+            animation: fadeIn 180ms ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ===================================
+           Inline Control Groups
+           =================================== */
+
+        /* Global Roles Table - Inline Role Update Controls */
+        .role-update-inline {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: var(--surface-muted);
+            border-radius: 10px;
+            border: 1px solid var(--border-subtle);
+        }
+
+        .role-update-inline .compact-select {
+            flex: 1;
+            min-width: 120px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 2px solid var(--border-color-strong);
+            background: linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%);
+            font-size: 14px;
+            color: var(--text-primary);
+            font-weight: 600;
+            transition: all 0.2s ease;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+            background-image:
+                linear-gradient(45deg, transparent 50%, var(--text-primary) 50%),
+                linear-gradient(135deg, var(--text-primary) 50%, transparent 50%),
+                linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%);
+            background-position:
+                calc(100% - 14px) calc(50% - 2px),
+                calc(100% - 8px) calc(50% - 2px),
+                0 0;
+            background-size:
+                6px 6px,
+                6px 6px,
+                100% 100%;
+            background-repeat: no-repeat;
+            cursor: pointer;
+        }
+
+        .role-update-inline .compact-select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), 0 2px 8px rgba(0, 0, 0, 0.1);
+            background: #ffffff;
+        }
+
+        .role-update-inline .compact-select:hover {
+            border-color: var(--border-color-strong);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+        }
+
+        .role-update-inline .btn {
+            padding: 6px 14px;
+            font-size: 13px;
+            font-weight: 600;
+            border-radius: 8px;
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .role-update-inline .btn:hover {
+            background: var(--primary-hover);
+            box-shadow: 0 4px 10px rgba(99, 102, 241, 0.2);
+            transform: translateY(-1px);
+        }
+
+        .role-update-inline .btn-outline-secondary {
+            background: white;
+            color: var(--primary-color);
+            border: 1px solid var(--primary-color);
+        }
+
+        .role-update-inline .btn-outline-secondary:hover {
+            background: var(--primary-light);
+            border-color: var(--primary-hover);
+            color: var(--primary-hover);
+        }
+
+        /* Access Request Cards - Grant Role Controls */
+        .access-request-card .role-select-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .access-request-card .compact-select {
+            flex: 0 0 auto;
+            min-width: 110px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 2px solid var(--border-color-strong);
+            background: linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%);
+            font-size: 14px;
+            color: var(--text-primary);
+            font-weight: 600;
+            transition: all 0.2s ease;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+            background-image:
+                linear-gradient(45deg, transparent 50%, var(--text-primary) 50%),
+                linear-gradient(135deg, var(--text-primary) 50%, transparent 50%),
+                linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%);
+            background-position:
+                calc(100% - 14px) calc(50% - 2px),
+                calc(100% - 8px) calc(50% - 2px),
+                0 0;
+            background-size:
+                6px 6px,
+                6px 6px,
+                100% 100%;
+            background-repeat: no-repeat;
+            cursor: pointer;
+        }
+
+        .access-request-card .compact-select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), 0 2px 8px rgba(0, 0, 0, 0.1);
+            background: #ffffff;
+        }
+
+        .access-request-card .compact-select:hover {
+            border-color: var(--border-color-strong);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+        }
+
+        .access-request-card .btn-sm {
+            padding: 7px 14px;
+            font-size: 13px;
+            font-weight: 600;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .access-request-card .btn-success {
+            background: var(--pill-approved);
+            color: white;
+        }
+
+        .access-request-card .btn-success:hover {
+            background: #059669;
+            box-shadow: 0 4px 10px rgba(22, 163, 74, 0.25);
+            transform: translateY(-1px);
+        }
+
+        .access-request-card .btn-danger {
+            background: var(--pill-denied);
+            color: white;
+        }
+
+        .access-request-card .btn-danger:hover {
+            background: #b91c1c;
+            box-shadow: 0 4px 10px rgba(220, 38, 38, 0.25);
+            transform: translateY(-1px);
+        }
+
+        /* Search Input for Global Roles */
+        .search-box {
+            position: relative;
+            margin: 16px 0;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border-subtle);
+            background: #f8fafc;
+            font-size: 14px;
+            color: var(--text-primary);
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+            background: #ffffff;
+        }
+
+        
+
+        .search-results-count {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 8px;
+            font-style: italic;
+        }
+
+        /* Mobile Responsiveness */
+        @media (max-width: 768px) {
+            .admin-header {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .admin-header-actions {
+                margin-top: 12px;
+                justify-content: flex-end;
+            }
+
+            .role-update-inline {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .role-update-inline .compact-select {
+                min-width: 100%;
+            }
+
+            .role-update-inline .btn {
+                width: 100%;
+            }
+
+            .access-request-card .role-select-wrapper {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .access-request-card .compact-select {
+                min-width: 100%;
+            }
+
+            .access-request-card .btn-sm {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-shell">
+        <div class="admin-header">
+            <div class="admin-title-group">
+                <a href="index.html" class="back-link">← Back to Dashboard</a>
+                <h1>Admin Panel</h1>
+            </div>
+            <div class="admin-header-actions">
+                <button
+                    class="btn btn-outline-secondary"
+                    onclick="window.apiClient.logout()"
+                    aria-label="Logout"
+                >
+                    Logout
+                </button>
+            </div>
+        </div>
+
+        <div class="admin-card">
+            <div class="tab-bar">
+                <button class="tab-button active" data-tab-target="tab-global-roles">Global Roles</button>
+                <button class="tab-button" data-tab-target="tab-access-requests">Access Requests</button>
+            </div>
+
+            <div class="tab-content">
+                <!-- Global Role Management Section -->
+                <div class="tab-panel active" id="tab-global-roles">
+                    <div id="roleManagementSection">
+                        <h2>Global Roles</h2>
+                        <p>Grant or revoke global permissions. Global roles apply across all charts.</p>
+
+                        <div class="grant-role-form">
+                            <input
+                                type="text"
+                                id="userIdInput"
+                                class="form-control"
+                                placeholder="User ID or Email"
+                            >
+                            <select id="roleSelect" class="form-control">
+                                <option value="admin">Admin (full access)</option>
+                                <option value="editor">Editor (can edit all charts)</option>
+                                <option value="viewer">Viewer (read-only)</option>
+                            </select>
+                            <button class="btn btn-primary" onclick="adminApp.grantRole()">Grant Role</button>
+                        </div>
+
+                        <hr class="section-divider">
+
+                        <div class="search-box">
+                            <input
+                                type="text"
+                                id="globalRolesSearch"
+                                placeholder="Search users…"
+                                aria-label="Search global roles by user ID, email, or role"
+                            >
+                        </div>
+                        <div id="searchResultsCount" class="search-results-count" style="display: none;"></div>
+
+                        <table class="user-table" id="globalRolesTable">
+                            <thead>
+                                <tr>
+                                    <th>User ID / Email</th>
+                                    <th>Role</th>
+                                    <th>Granted At</th>
+                                    <th>Update Role</th>
+                                </tr>
+                            </thead>
+                            <tbody id="globalRolesTableBody">
+                                <tr>
+                                    <td colspan="4" style="text-align: center; color: var(--text-muted);">Loading...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Access Requests Section -->
+                <div class="tab-panel" id="tab-access-requests">
+                    <div class="access-requests-header">
+                        <div>
+                            <h2>Access Requests</h2>
+                            <p>Review and manage user access requests for charts.</p>
+                        </div>
+                        <div class="filter-group">
+                            <label>
+                                <input type="radio" name="requestFilter" value="pending" checked onchange="adminApp.loadAccessRequests()"> Pending
+                            </label>
+                            <label>
+                                <input type="radio" name="requestFilter" value="approved" onchange="adminApp.loadAccessRequests()"> Approved
+                            </label>
+                            <label>
+                                <input type="radio" name="requestFilter" value="denied" onchange="adminApp.loadAccessRequests()"> Denied
+                            </label>
+                            <label>
+                                <input type="radio" name="requestFilter" value="" onchange="adminApp.loadAccessRequests()"> All
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="accessRequestsContainer">
+                        <p style="color: var(--text-muted);">Loading access requests...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load dependencies -->
+    <script src="js/toast.js"></script>
+    <script src="js/api-client.js"></script>
+    <script src="js/admin.js"></script>
+    <script>
+        // Lightweight tab switcher to keep content in a single panel
+        (function() {
+            const tabButtons = document.querySelectorAll('.tab-button');
+            const panels = document.querySelectorAll('.tab-panel');
+            tabButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    tabButtons.forEach(b => b.classList.remove('active'));
+                    panels.forEach(p => p.classList.remove('active'));
+                    btn.classList.add('active');
+                    const targetId = btn.getAttribute('data-tab-target');
+                    const targetPanel = document.getElementById(targetId);
+                    if (targetPanel) {
+                        targetPanel.classList.add('active');
+                    }
+                });
+            });
+        })();
+    </script>
+</body>
+</html>

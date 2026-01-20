@@ -116,6 +116,59 @@ class DashboardApp {
     }
 
     /**
+     * Show warning banner when API server is unavailable
+     * This helps users understand their charts aren't deleted, just inaccessible
+     */
+    showApiUnavailableWarning() {
+        // Only show once per session
+        if (this._apiWarningShown) return;
+        this._apiWarningShown = true;
+
+        // Create warning banner
+        const banner = document.createElement('div');
+        banner.id = 'api-unavailable-banner';
+        banner.style.cssText = `
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin: 16px auto;
+            max-width: 800px;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        `;
+        banner.innerHTML = `
+            <span style="font-size: 24px;">⚠️</span>
+            <div style="flex: 1;">
+                <strong style="color: #92400e; display: block; margin-bottom: 4px;">API Server Unavailable</strong>
+                <p style="color: #78350f; margin: 0; font-size: 14px; line-height: 1.5;">
+                    Cannot connect to the chart server. Your charts are safely stored in the cloud — they are not deleted.
+                    <br><strong>To fix:</strong> Start the API server with <code style="background: #fde68a; padding: 2px 6px; border-radius: 4px;">swa start app --api-location api</code> from the project root.
+                </p>
+            </div>
+            <button onclick="this.parentElement.remove()" style="background: none; border: none; cursor: pointer; font-size: 18px; color: #92400e; padding: 0;">✕</button>
+        `;
+
+        // Insert at top of main content
+        const container = document.getElementById('chartsContainer') || document.querySelector('main');
+        if (container) {
+            container.insertAdjacentElement('beforebegin', banner);
+        }
+
+        // Also log to console for developers
+        console.warn(
+            '%c API Server Not Running ',
+            'background: #f59e0b; color: #000; padding: 4px 8px; border-radius: 4px;',
+            '\nCharts are stored in MongoDB Atlas (cloud) — your data is safe.',
+            '\n\nTo start the API:',
+            '\n  cd api && npm run start',
+            '\n  OR: swa start app --api-location api'
+        );
+    }
+
+    /**
      * Enable/disable chart creation controls for viewer-only users
      */
     updateCreateButtonsState() {
@@ -219,6 +272,9 @@ class DashboardApp {
                     case 'request-access':
                         this.requestAccess(chartId);
                         break;
+                    case 'share':
+                        showChartSharing(chartId);
+                        break;
                     default:
                         console.warn('âš ï¸ Unknown action:', action);
                 }
@@ -276,6 +332,24 @@ class DashboardApp {
         });
     }
 
+    countPeople(nodes = []) {
+        if (!Array.isArray(nodes)) {
+            return 0;
+        }
+        return nodes.reduce((total, node) => {
+            if (node.members && Array.isArray(node.members)) {
+                const memberCount = node.members.reduce((sum, role) => {
+                    return sum + (role.entries ? role.entries.length : 0);
+                }, 0);
+                return total + memberCount;
+            }
+            if (node.name) {
+                return total + 1;
+            }
+            return total;
+        }, 0);
+    }
+
     /**
      * Render all charts (using API client for both authenticated and anonymous)
      */
@@ -295,12 +369,23 @@ class DashboardApp {
                     const apiCharts = Array.isArray(resp) ? resp : (resp?.charts || []);
 
                     // Transform API response to dashboard format
-                    charts = apiCharts.map(chart => ({
+                    charts = apiCharts.map(chart => {
+                        const nodeData = chart.data?.nodes || chart.nodes || [];
+                        const nodeCount = Number.isFinite(chart.nodeCount)
+                            ? chart.nodeCount
+                            : (Array.isArray(nodeData) ? nodeData.length : 0);
+                        const peopleCount = Number.isFinite(chart.peopleCount)
+                            ? chart.peopleCount
+                            : this.countPeople(nodeData);
+
+                        return ({
                         chartId: chart.id,
                         cloudId: chart.id,
                         chartName: chart.name,
                         name: chart.name,
-                        nodes: [], // Not needed for card display
+                        nodes: [], // Keep cards light; use counts instead of full node data
+                        nodeCount,
+                        peopleCount,
                         lastModified: chart.lastModified,
                         createdAt: chart.createdAt,
                         departmentTag: chart.data?.departmentTag || chart.data?.metadata?.departmentTag || '',
@@ -310,9 +395,16 @@ class DashboardApp {
                         roleSource: chart.roleSource,
                         isPublic: chart.isPublic,
                         sharedWith: chart.sharedWith
-                    }));
+                        });
+                    });
                 } catch (error) {
                     console.warn('Could not load charts from API:', error);
+
+                    // Detect API server not running (connection refused / failed to fetch)
+                    if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+                        // Show user-friendly warning that API is down
+                        this.showApiUnavailableWarning();
+                    }
 
                     // Don't show login prompts for server errors (500)
                     // 401 errors are automatically handled by api-client (redirects to login)
@@ -337,6 +429,8 @@ class DashboardApp {
                     .filter(chart => uuidRegex.test(chart.chartId))
                     .map(chart => ({
                         ...chart,
+                        nodeCount: Array.isArray(chart.nodes) ? chart.nodes.length : 0,
+                        peopleCount: this.countPeople(chart.nodes),
                         source: 'local',
                         synced: false,
                         userRole: 'owner'
@@ -470,25 +564,13 @@ class DashboardApp {
               })
             : 'No date';
 
-        const nodeCount = chart.nodes ? chart.nodes.length : 0;
+        const nodeCount = Number.isFinite(chart.nodeCount)
+            ? chart.nodeCount
+            : (chart.nodes ? chart.nodes.length : (chart.data?.nodes?.length || 0));
 
-        // Calculate total people count from multi-person nodes
-        let totalPeople = 0;
-        if (chart.nodes) {
-            chart.nodes.forEach(node => {
-                if (node.members && Array.isArray(node.members)) {
-                    // New format: count all people in all roles
-                    node.members.forEach(roleGroup => {
-                        if (roleGroup.entries) {
-                            totalPeople += roleGroup.entries.length;
-                        }
-                    });
-                } else if (node.name) {
-                    // Legacy format: one person per node
-                    totalPeople += 1;
-                }
-            });
-        }
+        const totalPeople = Number.isFinite(chart.peopleCount)
+            ? chart.peopleCount
+            : this.countPeople(chart.nodes || chart.data?.nodes || []);
 
         // Determine user's role and permissions (backend logic unchanged)
         const userRole = chart.userRole || 'viewer';
@@ -618,57 +700,30 @@ class DashboardApp {
                 <div class="chart-card-actions">
                     ${canEdit ? `
                         <button class="btn btn-sm btn-outline-secondary" data-action="edit" data-chart-id="${escapedChartId}" title="Edit Chart" aria-label="Edit ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                            </svg>
                             <span class="btn-label">Edit</span>
                         </button>
                     ` : `
                         <button class="btn btn-sm btn-outline-secondary" data-action="view" data-chart-id="${escapedChartId}" title="View Chart" aria-label="View ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                                <circle cx="12" cy="12" r="3"></circle>
-                            </svg>
                             <span class="btn-label">View</span>
                         </button>
                     `}
                     ${isOwner ? `
-                        <button class="btn btn-sm btn-outline-secondary" onclick="showChartSharing('${escapedChartId}')" title="Share Chart" aria-label="Share ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <circle cx="18" cy="5" r="3"></circle>
-                                <circle cx="6" cy="12" r="3"></circle>
-                                <circle cx="18" cy="19" r="3"></circle>
-                                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-                                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-                            </svg>
+                        <button class="btn btn-sm btn-outline-secondary" data-action="share" data-chart-id="${escapedChartId}" title="Share Chart" aria-label="Share ${this.escapeHtml(chart.chartName)}">
                             <span class="btn-label">Share</span>
                         </button>
                     ` : ''}
                     ${isViewer ? `
                         <button class="btn btn-sm btn-outline-secondary" data-action="request-access" data-chart-id="${escapedChartId}" title="Request Editor Access" aria-label="Request Access to ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                                <circle cx="12" cy="7" r="4"></circle>
-                            </svg>
                             <span class="btn-label">Request Access</span>
                         </button>
                     ` : ''}
                     ${canEdit ? `
                         <button class="btn btn-sm btn-outline-secondary" data-action="duplicate" data-chart-id="${escapedChartId}" title="Duplicate Chart" aria-label="Duplicate ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                            </svg>
                             <span class="btn-label">Duplicate</span>
                         </button>
                     ` : ''}
                     ${isOwner ? `
                         <button class="btn btn-sm btn-outline-secondary" data-action="delete" data-chart-id="${escapedChartId}" title="Delete Chart" aria-label="Delete ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <polyline points="3 6 5 6 21 6"></polyline>
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                            </svg>
                             <span class="btn-label">Delete</span>
                         </button>
                     ` : ''}
@@ -678,57 +733,30 @@ class DashboardApp {
                 <div class="chart-card-actions-mobile">
                     ${canEdit ? `
                         <button class="btn btn-sm btn-outline-secondary" data-action="edit" data-chart-id="${escapedChartId}" title="Edit Chart" aria-label="Edit ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                            </svg>
                             <span class="btn-label">Edit</span>
                         </button>
                     ` : `
                         <button class="btn btn-sm btn-outline-secondary" data-action="view" data-chart-id="${escapedChartId}" title="View Chart" aria-label="View ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                                <circle cx="12" cy="12" r="3"></circle>
-                            </svg>
                             <span class="btn-label">View</span>
                         </button>
                     `}
                     ${isOwner ? `
-                        <button class="btn btn-sm btn-outline-secondary" onclick="showChartSharing('${escapedChartId}')" title="Share Chart" aria-label="Share ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <circle cx="18" cy="5" r="3"></circle>
-                                <circle cx="6" cy="12" r="3"></circle>
-                                <circle cx="18" cy="19" r="3"></circle>
-                                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-                                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-                            </svg>
+                        <button class="btn btn-sm btn-outline-secondary" data-action="share" data-chart-id="${escapedChartId}" title="Share Chart" aria-label="Share ${this.escapeHtml(chart.chartName)}">
                             <span class="btn-label">Share</span>
                         </button>
                     ` : ''}
                     ${isViewer ? `
                         <button class="btn btn-sm btn-outline-secondary" data-action="request-access" data-chart-id="${escapedChartId}" title="Request Editor Access" aria-label="Request Access to ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                                <circle cx="12" cy="7" r="4"></circle>
-                            </svg>
                             <span class="btn-label">Request Access</span>
                         </button>
                     ` : ''}
                     ${canEdit ? `
                         <button class="btn btn-sm btn-outline-secondary" data-action="duplicate" data-chart-id="${escapedChartId}" title="Duplicate Chart" aria-label="Duplicate ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                            </svg>
                             <span class="btn-label">Duplicate</span>
                         </button>
                     ` : ''}
                     ${isOwner ? `
                         <button class="btn btn-sm btn-outline-secondary" data-action="delete" data-chart-id="${escapedChartId}" title="Delete Chart" aria-label="Delete ${this.escapeHtml(chart.chartName)}">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <polyline points="3 6 5 6 21 6"></polyline>
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                            </svg>
                             <span class="btn-label">Delete</span>
                         </button>
                     ` : ''}
@@ -909,7 +937,7 @@ class DashboardApp {
 
                 // Close modal and redirect to editor with UUID
                 this.closeModal();
-                window.location.href = `chart-editor.html?id=${newChartId}`;
+                this.navigateToChartEditor(newChartId);
 
             } catch (error) {
                 console.error('Failed to create chart:', error);
@@ -929,6 +957,23 @@ class DashboardApp {
     }
 
     /**
+     * Navigate to the chart editor and persist the last chart ID for recovery
+     */
+    navigateToChartEditor(chartId) {
+        if (!chartId) {
+            return;
+        }
+
+        try {
+            sessionStorage.setItem('lastChartId', chartId);
+        } catch (error) {
+            // Ignore storage errors (e.g., private mode)
+        }
+
+        window.location.href = `chart-editor.html?id=${encodeURIComponent(chartId)}`;
+    }
+
+    /**
      * Open chart in editor
      */
     openChart(chartId) {
@@ -944,7 +989,7 @@ class DashboardApp {
             return;
         }
 
-        window.location.href = `chart-editor.html?id=${chartId}`;
+        this.navigateToChartEditor(chartId);
     }
 
     /**
@@ -983,7 +1028,7 @@ class DashboardApp {
 
                     // Use chartId or id from response
                     const newChartId = createResponse.chartId || createResponse.id;
-                    window.location.href = `chart-editor.html?id=${newChartId}`;
+                    this.navigateToChartEditor(newChartId);
                 } catch (error) {
                     console.error('Failed to duplicate API chart:', error);
                     window.toast.error(`Failed to duplicate chart: ${error.message}`);

@@ -1,0 +1,115 @@
+{
+  "$schema": "cover-image-mapping-schema",
+  "description": "Maps charts to their corresponding cover images. Charts are matched by coverId (stable), then by name or departmentTag (legacy fallback).",
+  "documentCoverImage": "assets/cover-images/Slide1.png",
+  "coverOrder": [
+    "management-team",
+    "corporate-operations",
+    "project-management",
+    "civil-engineering",
+    "geotechnical-engineering",
+    "structural-engineering",
+    "testing-inspection-cmt",
+    "electrical-engineering",
+    "scada-solutions",
+    "energy-services",
+    "field-services-owner-representative",
+    "international",
+    "calibration-solutions"
+  ],
+  "coverImages": [
+    {
+      "id": "management-team",
+      "label": "Management Team",
+      "file": "assets/cover-images/Slide2.png",
+      "matchNames": ["RRC Management Team", "Management Team", "Executive Leadership Team"],
+      "matchDepartments": ["Executive", "Management"]
+    },
+    {
+      "id": "corporate-operations",
+      "label": "Corporate Operations",
+      "file": "assets/cover-images/Slide3.png",
+      "matchNames": ["Corporate Operations"],
+      "matchDepartments": ["Corporate Operations"]
+    },
+    {
+      "id": "project-management",
+      "label": "Project Management",
+      "file": "assets/cover-images/Slide4.png",
+      "matchNames": ["Project Management"],
+      "matchDepartments": ["Project Management"]
+    },
+    {
+      "id": "civil-engineering",
+      "label": "Civil Engineering",
+      "file": "assets/cover-images/Slide5.png",
+      "matchNames": ["Civil Engineering"],
+      "matchDepartments": ["Civil Engineering"]
+    },
+    {
+      "id": "geotechnical-engineering",
+      "label": "Geotechnical Engineering",
+      "file": "assets/cover-images/Slide6.png",
+      "matchNames": ["Geotechnical Engineering"],
+      "matchDepartments": ["Geotechnical Engineering"]
+    },
+    {
+      "id": "structural-engineering",
+      "label": "Structural Engineering",
+      "file": "assets/cover-images/Slide7.png",
+      "matchNames": ["Structural Engineering"],
+      "matchDepartments": ["Structural Engineering"]
+    },
+    {
+      "id": "testing-inspection-cmt",
+      "label": "Testing Inspection (CMT)",
+      "file": "assets/cover-images/Slide8.png",
+      "matchNames": ["Testing Inspection (CMT)", "Testing Inspection", "CMT"],
+      "matchDepartments": ["Testing Inspection", "CMT"]
+    },
+    {
+      "id": "electrical-engineering",
+      "label": "Electrical Engineering",
+      "file": "assets/cover-images/Slide9.png",
+      "matchNames": ["Electrical Engineering"],
+      "matchDepartments": ["Electrical Engineering"]
+    },
+    {
+      "id": "scada-solutions",
+      "label": "SCADA Solutions",
+      "file": "assets/cover-images/Slide10.png",
+      "matchNames": ["SCADA Solutions"],
+      "matchDepartments": ["SCADA", "SCADA Solutions"]
+    },
+    {
+      "id": "energy-services",
+      "label": "Energy Services",
+      "file": "assets/cover-images/Slide11.png",
+      "matchNames": ["Energy Services"],
+      "matchDepartments": ["Energy Services"]
+    },
+    {
+      "id": "field-services-owner-representative",
+      "label": "Field Services/Owner Representative",
+      "file": "assets/cover-images/Slide12.png",
+      "matchNames": ["Field Services/Owner Representative", "Field Services", "Owner Representative"],
+      "matchDepartments": ["Field Services", "Owner Representative"]
+    },
+    {
+      "id": "international",
+      "label": "International",
+      "file": "assets/cover-images/Slide13.png",
+      "matchNames": ["International"],
+      "matchDepartments": ["International"]
+    },
+    {
+      "id": "calibration-solutions",
+      "label": "Calibration Solutions",
+      "file": "assets/cover-images/Slide14.png",
+      "matchNames": ["Calibration Solutions"],
+      "matchDepartments": ["Calibration"]
+    }
+  ],
+  "fallbackImage": "assets/cover-images/Slide1.png",
+  "notes": "documentCoverImage (Slide1) is used for the main PDF cover page. fallbackImage (Slide1) is used for charts without a coverId or match. coverOrder defines stable export order and chart sorting. Charts store coverId in their data for stable cover matching regardless of name/department changes. coverImages map Slide2 through Slide14 to chart cover options."
+}

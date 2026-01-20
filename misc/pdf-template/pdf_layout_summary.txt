@@ -1,0 +1,76 @@
+================================================================================
+PDF VISUAL LAYOUT ANALYSIS SUMMARY
+================================================================================
+
+COVER PAGE
+--------------------------------------------------------------------------------
+Dimensions: 1680 x 947 pts
+Orientation: Landscape
+Text Elements: 16 words
+Rectangles: 24
+Lines: 0
+Curves: 383
+Images: 3
+Fonts Used: unknown
+Font Sizes: 16.0, 20.0, 22.0, 43.0, 100.0 pts
+Colors Used: 1 unique colors
+
+Text Content:
+  RRC COMPANIES Organizational Chart Updated as of 30 Oct 2025 www.RRCcompanies.com | EXPERIENCE MATTERS CONFIDENTIAL 1...
+
+Key Rectangular Elements:
+  Box 1: 1680.0x947.0 at (0.0, 0.0)
+  Box 2: 1680.0x61.0 at (0.0, 886.0)
+  Box 3: 578.0x61.0 at (0.0, 886.0)
+  Box 4: 5.96x1.25 at (184.99, 918.45)
+  Box 5: 1.41x11.64 at (206.83, 911.36)
+
+OVERVIEW PAGE
+--------------------------------------------------------------------------------
+Dimensions: 1680 x 947 pts
+Orientation: Landscape
+Text Elements: 34 words
+Rectangles: 46
+Lines: 0
+Curves: 539
+Images: 8
+Fonts Used: unknown
+Font Sizes: 14.0, 16.0, 17.0, 20.0, 22.0, 53.0 pts
+Colors Used: 1 unique colors
+
+Text Content:
+  RRC Companies RRC COMPANIES RRC POWER & ENERGY RRC ENERGY SERVICES RRC SCADA SOLUTIONS RRC INTERNATIONAL CALIBRATION SOLUTIONS Engineering Land...
+
+Key Rectangular Elements:
+  Box 1: 1680.0x947.0 at (0.0, 0.0)
+  Box 2: 4.0x136.0 at (1331.0, 410.0)
+  Box 3: 980.93x4.0 at (349.04, 405.0)
+  Box 4: 4.0x136.0 at (344.0, 410.0)
+  Box 5: 6.62x2.04 at (861.39, 308.14)
+
+HR DEPARTMENT PAGE
+--------------------------------------------------------------------------------
+Dimensions: 1680 x 947 pts
+Orientation: Landscape
+Text Elements: 68 words
+Rectangles: 82
+Lines: 0
+Curves: 1007
+Images: 17
+Fonts Used: unknown
+Font Sizes: 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 53.0 pts
+Colors Used: 1 unique colors
+
+Text Content:
+  Corporate Operations - HR Head of Human Resources Rachel Ogbamichael Jennifer Jorden Kristine Joy Natividad RRC Energy
+ RRC Power and
+...
+
+Key Rectangular Elements:
+  Box 1: 1680.0x947.0 at (0.0, 0.0)
+  Box 2: 4.0x182.0 at (1538.0, 427.0)
+  Box 3: 233.87x4.0 at (1303.06, 422.0)
+  Box 4: 4.0x182.0 at (1298.0, 427.0)
+  Box 5: 1680.0x61.0 at (0.0, 886.0)
+
+================================================================================

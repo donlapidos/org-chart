@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="assets/rrc-favicon.svg">
+    <link rel="icon" type="image/png" href="assets/rrc-favicon.png">
+    <title>API Test Suite - Org Chart</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+        }
+
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .test-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        button.success {
+            background: #10b981;
+        }
+
+        button.danger {
+            background: #ef4444;
+        }
+
+        button.warning {
+            background: #f59e0b;
+        }
+
+        .test-results {
+            margin-top: 20px;
+        }
+
+        .test-item {
+            background: #f9fafb;
+            border-left: 4px solid #e5e7eb;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+
+        .test-item.running {
+            border-left-color: #3b82f6;
+            background: #eff6ff;
+        }
+
+        .test-item.success {
+            border-left-color: #10b981;
+            background: #f0fdf4;
+        }
+
+        .test-item.error {
+            border-left-color: #ef4444;
+            background: #fef2f2;
+        }
+
+        .test-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .test-name {
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .test-status {
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        .test-status.running {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .test-status.success {
+            background: #10b981;
+            color: white;
+        }
+
+        .test-status.error {
+            background: #ef4444;
+            color: white;
+        }
+
+        .test-details {
+            font-size: 14px;
+            color: #6b7280;
+            margin-top: 8px;
+        }
+
+        .test-response {
+            background: #1f2937;
+            color: #10b981;
+            padding: 12px;
+            border-radius: 4px;
+            margin-top: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .summary.show {
+            display: block;
+        }
+
+        .summary-stats {
+            display: flex;
+            gap: 30px;
+            margin-top: 10px;
+        }
+
+        .summary-stat {
+            font-size: 14px;
+        }
+
+        .summary-stat strong {
+            font-size: 24px;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 API Test Suite</h1>
+        <p class="subtitle">Test all backend endpoints and verify cloud integration</p>
+
+        <div class="summary" id="summary">
+            <div>
+                <strong>Test Summary</strong>
+                <div class="summary-stats">
+                    <div class="summary-stat">
+                        <strong id="totalTests">0</strong>
+                        Total
+                    </div>
+                    <div class="summary-stat">
+                        <strong id="passedTests">0</strong>
+                        Passed
+                    </div>
+                    <div class="summary-stat">
+                        <strong id="failedTests">0</strong>
+                        Failed
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="test-controls">
+            <button onclick="runAllTests()">▶️ Run All Tests</button>
+            <button onclick="runTest('auth')" class="success">🔐 Test Auth</button>
+            <button onclick="runTest('create')" class="success">➕ Test Create</button>
+            <button onclick="runTest('getAll')" class="success">📋 Test Get All</button>
+            <button onclick="runTest('getOne')" class="success">📄 Test Get One</button>
+            <button onclick="runTest('update')" class="warning">✏️ Test Update</button>
+            <button onclick="runTest('delete')" class="danger">🗑️ Test Delete</button>
+            <button onclick="clearResults()">🧹 Clear Results</button>
+        </div>
+
+        <div class="test-results" id="testResults"></div>
+    </div>
+
+    <script src="js/toast.js"></script>
+    <script src="js/api-client.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/cloud-storage.js"></script>
+
+    <script>
+        let testChartId = null;
+        let testResults = {
+            total: 0,
+            passed: 0,
+            failed: 0
+        };
+
+        function updateSummary() {
+            document.getElementById('summary').classList.add('show');
+            document.getElementById('totalTests').textContent = testResults.total;
+            document.getElementById('passedTests').textContent = testResults.passed;
+            document.getElementById('failedTests').textContent = testResults.failed;
+        }
+
+        function addTestResult(name, status, details, response = null) {
+            const resultsContainer = document.getElementById('testResults');
+
+            const testItem = document.createElement('div');
+            testItem.className = `test-item ${status}`;
+            testItem.innerHTML = `
+                <div class="test-header">
+                    <div class="test-name">${name}</div>
+                    <div class="test-status ${status}">${status.toUpperCase()}</div>
+                </div>
+                <div class="test-details">${details}</div>
+                ${response ? `<div class="test-response">${JSON.stringify(response, null, 2)}</div>` : ''}
+            `;
+
+            resultsContainer.appendChild(testItem);
+
+            if (status === 'success') {
+                testResults.passed++;
+            } else if (status === 'error') {
+                testResults.failed++;
+            }
+            testResults.total++;
+            updateSummary();
+        }
+
+        async function runTest(testName) {
+            const tests = {
+                auth: testAuthentication,
+                create: testCreateChart,
+                getAll: testGetAllCharts,
+                getOne: testGetOneChart,
+                update: testUpdateChart,
+                delete: testDeleteChart
+            };
+
+            if (tests[testName]) {
+                await tests[testName]();
+            }
+        }
+
+        async function runAllTests() {
+            clearResults();
+            console.log('🧪 Starting API Test Suite...\n');
+
+            await testAuthentication();
+            await sleep(500);
+
+            await testCreateChart();
+            await sleep(500);
+
+            await testGetAllCharts();
+            await sleep(500);
+
+            if (testChartId) {
+                await testGetOneChart();
+                await sleep(500);
+
+                await testUpdateChart();
+                await sleep(500);
+
+                await testDeleteChart();
+            }
+
+            console.log('\n✅ Test suite completed!');
+        }
+
+        async function testAuthentication() {
+            addTestResult('Authentication Check', 'running', 'Checking authentication status...');
+
+            try {
+                const user = await window.apiClient.checkAuth();
+
+                if (user && window.apiClient.isAuthenticated) {
+                    addTestResult(
+                        'Authentication Check',
+                        'success',
+                        `✅ Authenticated as: ${user.userDetails}`,
+                        { userId: user.userId, email: user.userDetails }
+                    );
+                    console.log('✅ Auth test passed:', user);
+                } else {
+                    addTestResult(
+                        'Authentication Check',
+                        'error',
+                        '❌ Not authenticated. Please log in first.',
+                        { authenticated: false }
+                    );
+                    console.error('❌ Auth test failed: Not authenticated');
+                }
+            } catch (error) {
+                addTestResult(
+                    'Authentication Check',
+                    'error',
+                    `❌ Error: ${error.message}`,
+                    { error: error.message }
+                );
+                console.error('❌ Auth test error:', error);
+            }
+        }
+
+        async function testCreateChart() {
+            addTestResult('Create Chart', 'running', 'Creating test chart...');
+
+            try {
+                const testData = {
+                    nodes: [
+                        {
+                            id: 'node-1',
+                            parentId: null,
+                            members: [{
+                                roleLabel: 'CEO',
+                                entries: [{
+                                    name: 'Test User',
+                                    email: 'test@example.com',
+                                    phone: '',
+                                    photoUrl: ''
+                                }]
+                            }],
+                            meta: { department: 'Executive', notes: 'Test node' }
+                        }
+                    ],
+                    layout: 'vertical',
+                    theme: 'default'
+                };
+
+                const result = await window.cloudStorage.saveChart(
+                    null, // No chartId for new chart
+                    'API Test Chart - ' + new Date().toISOString(),
+                    testData
+                );
+
+                testChartId = result.chartId;
+
+                addTestResult(
+                    'Create Chart',
+                    'success',
+                    `✅ Chart created successfully! ID: ${testChartId}`,
+                    result
+                );
+                console.log('✅ Create test passed:', result);
+
+            } catch (error) {
+                addTestResult(
+                    'Create Chart',
+                    'error',
+                    `❌ Error: ${error.message}`,
+                    { error: error.message }
+                );
+                console.error('❌ Create test failed:', error);
+            }
+        }
+
+        async function testGetAllCharts() {
+            addTestResult('Get All Charts', 'running', 'Fetching all charts...');
+
+            try {
+                const charts = await window.cloudStorage.getAllCharts();
+
+                addTestResult(
+                    'Get All Charts',
+                    'success',
+                    `✅ Retrieved ${charts.length} chart(s)`,
+                    { count: charts.length, charts: charts.map(c => ({ id: c.id, name: c.name })) }
+                );
+                console.log('✅ Get all test passed:', charts);
+
+            } catch (error) {
+                addTestResult(
+                    'Get All Charts',
+                    'error',
+                    `❌ Error: ${error.message}`,
+                    { error: error.message }
+                );
+                console.error('❌ Get all test failed:', error);
+            }
+        }
+
+        async function testGetOneChart() {
+            if (!testChartId) {
+                addTestResult(
+                    'Get One Chart',
+                    'error',
+                    '❌ No chart ID available. Run create test first.',
+                    { error: 'No testChartId' }
+                );
+                return;
+            }
+
+            addTestResult('Get One Chart', 'running', `Fetching chart ${testChartId}...`);
+
+            try {
+                const chart = await window.cloudStorage.loadChart(testChartId);
+
+                addTestResult(
+                    'Get One Chart',
+                    'success',
+                    `✅ Retrieved chart: ${chart.name}`,
+                    { id: chart.id, name: chart.name, nodeCount: chart.data?.nodes?.length || 0 }
+                );
+                console.log('✅ Get one test passed:', chart);
+
+            } catch (error) {
+                addTestResult(
+                    'Get One Chart',
+                    'error',
+                    `❌ Error: ${error.message}`,
+                    { error: error.message }
+                );
+                console.error('❌ Get one test failed:', error);
+            }
+        }
+
+        async function testUpdateChart() {
+            if (!testChartId) {
+                addTestResult(
+                    'Update Chart',
+                    'error',
+                    '❌ No chart ID available. Run create test first.',
+                    { error: 'No testChartId' }
+                );
+                return;
+            }
+
+            addTestResult('Update Chart', 'running', `Updating chart ${testChartId}...`);
+
+            try {
+                const updatedData = {
+                    nodes: [
+                        {
+                            id: 'node-1',
+                            parentId: null,
+                            members: [{
+                                roleLabel: 'CEO',
+                                entries: [{
+                                    name: 'Updated Test User',
+                                    email: 'updated@example.com',
+                                    phone: '555-1234',
+                                    photoUrl: ''
+                                }]
+                            }],
+                            meta: { department: 'Executive', notes: 'Updated test node' }
+                        },
+                        {
+                            id: 'node-2',
+                            parentId: 'node-1',
+                            members: [{
+                                roleLabel: 'CTO',
+                                entries: [{
+                                    name: 'Tech Lead',
+                                    email: 'tech@example.com',
+                                    phone: '',
+                                    photoUrl: ''
+                                }]
+                            }],
+                            meta: { department: 'Technology', notes: 'New node' }
+                        }
+                    ],
+                    layout: 'vertical',
+                    theme: 'default'
+                };
+
+                const result = await window.cloudStorage.saveChart(
+                    testChartId,
+                    'API Test Chart - Updated',
+                    updatedData
+                );
+
+                addTestResult(
+                    'Update Chart',
+                    'success',
+                    '✅ Chart updated successfully!',
+                    result
+                );
+                console.log('✅ Update test passed:', result);
+
+            } catch (error) {
+                addTestResult(
+                    'Update Chart',
+                    'error',
+                    `❌ Error: ${error.message}`,
+                    { error: error.message }
+                );
+                console.error('❌ Update test failed:', error);
+            }
+        }
+
+        async function testDeleteChart() {
+            if (!testChartId) {
+                addTestResult(
+                    'Delete Chart',
+                    'error',
+                    '❌ No chart ID available. Run create test first.',
+                    { error: 'No testChartId' }
+                );
+                return;
+            }
+
+            addTestResult('Delete Chart', 'running', `Deleting chart ${testChartId}...`);
+
+            try {
+                const result = await window.cloudStorage.deleteChart(testChartId);
+
+                addTestResult(
+                    'Delete Chart',
+                    'success',
+                    '✅ Chart deleted successfully (90-day recovery available)',
+                    result
+                );
+                console.log('✅ Delete test passed:', result);
+
+                testChartId = null; // Clear test chart ID
+
+            } catch (error) {
+                addTestResult(
+                    'Delete Chart',
+                    'error',
+                    `❌ Error: ${error.message}`,
+                    { error: error.message }
+                );
+                console.error('❌ Delete test failed:', error);
+            }
+        }
+
+        function clearResults() {
+            document.getElementById('testResults').innerHTML = '';
+            document.getElementById('summary').classList.remove('show');
+            testResults = { total: 0, passed: 0, failed: 0 };
+            console.clear();
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Show initial message
+        console.log('🧪 API Test Suite Ready');
+        console.log('Click "Run All Tests" to start testing all endpoints');
+        console.log('Or click individual test buttons to test specific operations');
+    </script>
+</body>
+</html>

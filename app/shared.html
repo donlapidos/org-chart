@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="assets/rrc-favicon.svg">
+    <title>Shared Chart - RRC Organizational Chart</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/modernization-styles.css">
+
+    <!-- D3 Dependencies -->
+    <script src="vendor/d3.v7.min.js"></script>
+    <script src="vendor/d3-shape.v3.min.js"></script>
+    <script src="vendor/d3-flextree.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        }
+
+        .shared-layout {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background: #f5f5f5;
+        }
+
+        .shared-header {
+            background: white;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 1rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .shared-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .shared-badge {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .shared-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        .shared-content {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            background: white;
+        }
+
+        .chart-canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        .error-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .error-icon {
+            font-size: 64px;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .error-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .error-message {
+            color: #666;
+            margin-bottom: 1.5rem;
+        }
+
+        .loading-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #1976d2;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #1976d2;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #1565c0;
+        }
+
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+    </style>
+</head>
+<body>
+    <div class="shared-layout">
+        <!-- Header -->
+        <div class="shared-header">
+            <div class="shared-title">
+                <h1 id="chartTitle" style="font-size: 18px; font-weight: 600; margin: 0;">
+                    Loading...
+                </h1>
+                <span class="shared-badge">SHARED VIEW</span>
+            </div>
+            <div class="shared-controls">
+                <button class="btn btn-secondary" onclick="zoomOut()" title="Zoom out">
+                    <span style="font-size: 16px;">−</span>
+                </button>
+                <button class="btn btn-secondary" onclick="zoomIn()" title="Zoom in">
+                    <span style="font-size: 16px;">+</span>
+                </button>
+                <button class="btn btn-secondary" onclick="resetZoom()" title="Reset view">
+                    <span style="font-size: 14px;">⟲</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Content Area -->
+        <div class="shared-content" id="contentArea">
+            <!-- Loading state -->
+            <div class="loading-container" id="loadingState">
+                <div class="spinner"></div>
+            </div>
+
+            <!-- Chart will render here -->
+            <div id="chart" class="chart-canvas" style="display: none;"></div>
+
+            <!-- Error state (hidden by default) -->
+            <div class="error-container" id="errorState" style="display: none;">
+                <div class="error-icon">⚠️</div>
+                <h2 class="error-title" id="errorTitle">Unable to load chart</h2>
+                <p class="error-message" id="errorMessage"></p>
+                <button class="btn btn-primary" onclick="window.location.href='/'">
+                    Create Your Own Chart
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notifications -->
+    <script src="js/toast.js"></script>
+
+    <!-- API Client -->
+    <script src="js/api-client.js"></script>
+
+    <!-- D3 Org Chart -->
+    <script src="js/d3-org-chart.js"></script>
+
+    <!-- Org Node Renderer -->
+    <script src="js/org-node-renderer.js"></script>
+
+    <!-- Shared Chart Logic -->
+    <script>
+        let chart = null;
+        let currentScale = 1;
+        let svg = null;
+
+        /**
+         * Initialize shared chart viewer
+         */
+        async function initSharedViewer() {
+            // Parse token from URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('token');
+
+            if (!token) {
+                showError('Missing Token', 'No share token provided in URL.');
+                return;
+            }
+
+            try {
+                // Fetch chart data via anonymous API
+                const response = await window.apiClient.getSharedChart(token);
+
+                chart = response.chart;
+
+                // Update UI
+                document.getElementById('chartTitle').textContent = chart.name || 'Untitled Chart';
+
+                // Validate chart has nodes
+                if (!chart.data || !chart.data.nodes || chart.data.nodes.length === 0) {
+                    showError('Empty Chart', 'This chart has no nodes to display.');
+                    return;
+                }
+
+                // Render chart
+                renderChart(chart.data);
+
+                // Hide loading, show chart
+                document.getElementById('loadingState').style.display = 'none';
+                document.getElementById('chart').style.display = 'block';
+
+            } catch (error) {
+                console.error('Failed to load shared chart:', error);
+
+                // Determine error type from message
+                let errorTitle = 'Unable to Load Chart';
+                let errorMessage = error.message;
+
+                if (error.message.includes('revoked')) {
+                    errorTitle = 'Link Revoked';
+                    errorMessage = 'This share link has been revoked by the chart owner.';
+                } else if (error.message.includes('expired')) {
+                    errorTitle = 'Link Expired';
+                    errorMessage = 'This share link has expired.';
+                } else if (error.message.includes('not found')) {
+                    errorTitle = 'Link Not Found';
+                    errorMessage = 'This share link does not exist or is invalid.';
+                } else if (error.message.includes('no longer exists')) {
+                    errorTitle = 'Chart Deleted';
+                    errorMessage = 'The chart has been deleted by its owner.';
+                }
+
+                showError(errorTitle, errorMessage);
+            }
+        }
+
+        /**
+         * Show error state
+         */
+        function showError(title, message) {
+            document.getElementById('errorTitle').textContent = title;
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('chart').style.display = 'none';
+            document.getElementById('errorState').style.display = 'flex';
+        }
+
+        /**
+         * Render organization chart
+         */
+        function renderChart(chartData) {
+            const container = document.getElementById('chart');
+            container.innerHTML = ''; // Clear
+
+            // Transform data for d3-org-chart format (same as chart-editor.js)
+            const chartNodes = chartData.nodes.map(node => ({
+                id: node.id,
+                parentId: node.parentId || '',
+                members: node.members || [],
+                meta: node.meta || {},
+                _expanded: true,
+                // Legacy fields for backward compatibility
+                name: node.name,
+                title: node.title,
+                department: node.department || (node.meta && node.meta.department)
+            }));
+
+            // Use D3 org chart renderer
+            const orgChart = new d3.OrgChart()
+                .container(container)
+                .data(chartNodes)
+                .svgHeight(window.innerHeight - 70) // Account for header
+                .svgWidth(window.innerWidth)
+                .initialZoom(0.9)
+                .nodeWidth(() => 250)
+                .nodeHeight((d) => {
+                    const node = d.data || d;
+                    return window.OrgNodeRenderer ? OrgNodeRenderer.calculateNodeHeight(node) : 100;
+                })
+                .onNodeClick(d => {
+                    // Read-only: no node editing
+                    console.log('Node clicked:', d.data);
+                })
+                .nodeContent(d => {
+                    // Use shared node renderer for consistent styling
+                    if (window.OrgNodeRenderer) {
+                        return OrgNodeRenderer.renderNodeContent(d);
+                    }
+                    // Fallback to basic rendering if renderer not available
+                    const node = d.data || d;
+                    return `
+                        <div style="background: white; border: 1px solid #ccc; border-radius: 4px; padding: 8px; min-width: 200px;">
+                            <div style="font-weight: 600; margin-bottom: 4px;">${node.name || 'Unknown'}</div>
+                            <div style="font-size: 12px; color: #666;">${node.title || ''}</div>
+                        </div>
+                    `;
+                })
+                .render();
+
+            // Store SVG reference for zoom controls
+            svg = container.querySelector('svg');
+        }
+
+        /**
+         * Zoom controls
+         */
+        function zoomIn() {
+            currentScale = Math.min(currentScale * 1.2, 3);
+            applyZoom();
+        }
+
+        function zoomOut() {
+            currentScale = Math.max(currentScale / 1.2, 0.3);
+            applyZoom();
+        }
+
+        function resetZoom() {
+            currentScale = 1;
+            applyZoom();
+        }
+
+        function applyZoom() {
+            if (svg) {
+                const g = svg.querySelector('g');
+                if (g) {
+                    const currentTransform = g.getAttribute('transform') || '';
+                    // Preserve translation, update scale
+                    const translateMatch = currentTransform.match(/translate\(([^)]+)\)/);
+                    const translate = translateMatch ? translateMatch[1] : '0,0';
+                    g.setAttribute('transform', `translate(${translate}) scale(${currentScale})`);
+                }
+            }
+        }
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', initSharedViewer);
+    </script>
+</body>
+</html>

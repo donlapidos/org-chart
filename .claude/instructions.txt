@@ -1,0 +1,1 @@
+In chart-editor, call a helper (similar to DashboardApp.ensureToastSystem) before using window.toast so ChartEditor doesn’t crash when toast.js isn’t ready. Once window.toast exists, ChartEditor can safely call its methods without aborting loadChart().

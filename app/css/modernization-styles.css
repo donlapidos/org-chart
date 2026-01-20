@@ -81,14 +81,12 @@
 }
 
 .chart-card:hover {
-    border-width: 2px;
     border-color: var(--card-accent-hover);
     box-shadow: 0 12px 20px -5px rgba(0, 133, 242, 0.15);
     transform: translateY(-2px);
 }
 
 .chart-card:focus-visible {
-    border-width: 2px;
     border-color: var(--card-accent-hover);
     box-shadow: 0 0 0 3px rgba(0, 133, 242, 0.2);
 }
@@ -106,6 +104,24 @@
     color: var(--text-primary);
     line-height: var(--leading-tight);
     margin: 0;
+}
+
+.chart-card-header > div {
+    min-width: 0;
+}
+
+.chart-card-tags {
+    margin-top: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.chart-card-tags .pill-tag {
+    max-width: 100%;
+    white-space: normal;
+    word-break: break-word;
 }
 
 /* CRITICAL FIX: Make action menu always visible */
@@ -234,8 +250,18 @@
 /* Active/hover state - keep white background, enhance border only */
 .chart-card:hover {
     background: var(--background);  /* Pure white - no tint */
-    border-color: var(--card-accent, var(--rrc-blue));
-    border-left-width: 6px;  /* Thicker accent on hover */
+    border-color: var(--card-accent-hover, var(--card-accent, var(--rrc-blue)));
+}
+
+.chart-card-actions {
+    align-self: stretch;
+    width: 100%;
+    box-sizing: border-box;
+    flex-wrap: wrap;
+    row-gap: 0.5rem;
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border-color);
+    margin-top: auto;  /* Push to bottom of card */
 }
 
 /* Department Pill Tags */

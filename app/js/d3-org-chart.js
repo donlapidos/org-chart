@@ -1822,6 +1822,7 @@
             function serializeString(svg) {
                 const xmlns = 'http://www.w3.org/2000/xmlns/';
                 const xlinkns = 'http://www.w3.org/1999/xlink';
+                const xhtmlns = 'http://www.w3.org/1999/xhtml';
                 const svgns = 'http://www.w3.org/2000/svg';
                 svg = svg.cloneNode(true);
                 const fragment = window.location.href + '#';
@@ -1835,6 +1836,7 @@
                 }
                 svg.setAttributeNS(xmlns, 'xmlns', svgns);
                 svg.setAttributeNS(xmlns, 'xmlns:xlink', xlinkns);
+                svg.setAttributeNS(xmlns, 'xmlns:xhtml', xhtmlns);
                 const serializer = new XMLSerializer();
                 const string = serializer.serializeToString(svg);
                 return string;

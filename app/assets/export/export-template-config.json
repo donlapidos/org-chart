@@ -1,0 +1,101 @@
+{
+  "page": {
+    "widthPt": 1680,
+    "heightPt": 947,
+    "widthMm": 592.66,
+    "heightMm": 334.01,
+    "zones": {
+      "header": { "yPt": 0, "heightPt": 150, "heightMm": 52.92 },
+      "content": { "yPt": 150, "heightPt": 736, "heightMm": 259.53 },
+      "footer": { "yPt": 886, "heightPt": 61, "heightMm": 21.50 }
+    },
+    "marginsPt": { "left": 40, "right": 40, "top": 30, "bottom": 30 }
+  },
+  "palette": {
+    "background": "#FFFFFF",
+    "text": "#000000",
+    "footer": "#1A1A1A",
+    "accent": "#000000"
+  },
+  "fonts": {
+    "primary": {
+      "family": "Roboto",
+      "files": {
+        "regular": "assets/export/Roboto-Regular.ttf",
+        "semibold": "assets/export/Roboto-Bold.ttf"
+      },
+      "scalePt": {
+        "display": 100,
+        "h1": 53,
+        "h2": 22,
+        "h3": 20,
+        "body": 18,
+        "bodySmall": 16,
+        "label": 14,
+        "caption": 12
+      }
+    },
+    "heading": {
+      "family": "SpaceGrotesk",
+      "files": {
+        "regular": "assets/export/SpaceGrotesk-Regular.ttf",
+        "semibold": "assets/export/SpaceGrotesk-SemiBold.ttf"
+      }
+    }
+  },
+  "logo": {
+    "path": "assets/export/rrc-logo.svg",
+    "sizePt": { "width": 200, "height": 70 },
+    "positionPt": { "x": 120, "y": 60 }
+  },
+  "nodeBoxes": {
+    "level1": {
+      "widthPt": 400,
+      "heightPt": 120,
+      "widthMm": 141.11,
+      "heightMm": 42.33,
+      "fontTitlePt": 20,
+      "fontNamePt": 18
+    },
+    "level2": {
+      "widthPt": 350,
+      "heightPt": 100,
+      "widthMm": 123.47,
+      "heightMm": 35.28,
+      "fontTitlePt": 18,
+      "fontNamePt": 16
+    },
+    "level3": {
+      "widthPt": 250,
+      "heightPt": 90,
+      "widthMm": 88.19,
+      "heightMm": 31.75,
+      "fontTitlePt": 16,
+      "fontNamePt": 14
+    },
+    "spacingPt": {
+      "horizontalMin": 20,
+      "horizontalMax": 50,
+      "verticalMin": 50,
+      "verticalMax": 80
+    }
+  },
+  "overviewColumns": {
+    "count": 5,
+    "widthPt": 336,
+    "gutterPt": 16
+  },
+  "footer": {
+    "heightPt": 61,
+    "textPt": 14,
+    "alignment": "center",
+    "fields": ["classification", "url", "pageNumber"]
+  },
+  "images": {
+    "maxQuality": "high",
+    "targetAspect": 1.775,
+    "captureWidthPx": 2000,
+    "captureHeightPx": 1128,
+    "previewWidthPx": 900
+  }
+}
