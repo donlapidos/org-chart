@@ -1078,6 +1078,9 @@ class ChartEditor {
             '--radius': computedStyle.getPropertyValue('--radius') || '8px',
             '--radius-sm': computedStyle.getPropertyValue('--radius-sm') || '4px',
             '--radius-lg': computedStyle.getPropertyValue('--radius-lg') || '12px',
+            '--primary-500': computedStyle.getPropertyValue('--primary-500') || '#0085f2',
+            '--primary-700': computedStyle.getPropertyValue('--primary-700') || '#0066bd',
+            '--accent-500': computedStyle.getPropertyValue('--accent-500') || '#ff6900',
             // RRC Brand Colors
             '--rrc-blue': computedStyle.getPropertyValue('--rrc-blue') || '#0085f2',
             '--rrc-blue-light': computedStyle.getPropertyValue('--rrc-blue-light') || '#D3ECFE',
@@ -1147,11 +1150,22 @@ class ChartEditor {
 
         const baseCSS = await baseResponse.text();
         const modernCSS = modernResponse.ok ? await modernResponse.text() : '';
-        const combinedCSS = `${baseCSS}\n\n/* Modernization Styles */\n${modernCSS}`;
+
+        // Get OrgNodeRenderer styles (critical for node header bar + styling)
+        const nodeRendererCSS = typeof OrgNodeRenderer !== 'undefined' && OrgNodeRenderer.getNodeStyles
+            ? OrgNodeRenderer.getNodeStyles()
+            : '';
+
+        const combinedCSS = `${baseCSS}\n\n/* Modernization Styles */\n${modernCSS}\n\n/* Node Renderer Styles */\n${nodeRendererCSS}`;
 
         // Resolve CSS variables for SVG injection
         const cssVariables = this.getResolvedCSSVariables();
         const resolvedCSS = this.resolveCSSVariables(combinedCSS, cssVariables);
+
+        if (document.fonts && document.fonts.ready) {
+            await document.fonts.ready;
+            console.log('[Export] Fonts loaded before measurement');
+        }
 
         // Analyze chart structure for dynamic canvas sizing
         const analysis = this.analyzeChartStructure(this.chartData.nodes || []);
@@ -1183,6 +1197,13 @@ class ChartEditor {
         const canvasDiv = document.createElement('div');
         canvasDiv.id = 'temp-chart-canvas';
         canvasDiv.style.cssText = `width: ${captureWidth}px; height: ${captureHeight}px;`;
+
+        // Apply CSS variables directly to the export container as custom properties
+        // This ensures any var() references in inline styles or dynamic CSS resolve correctly
+        for (const [varName, value] of Object.entries(cssVariables)) {
+            canvasDiv.style.setProperty(varName, value.trim());
+        }
+
         container.appendChild(canvasDiv);
         document.body.appendChild(container);
 
@@ -1260,15 +1281,43 @@ class ChartEditor {
     }
 
     /**
-     * Export as PNG
+     * Export as PNG with title
      */
     async exportPNG() {
         try {
             const base64 = await this.renderChartOffScreen(2.0);
-            const a = document.createElement('a');
-            a.href = base64;
-            a.download = `${this.chartData.chartName || 'org-chart'}.png`;
-            a.click();
+            const chartName = this.chartData.chartName || 'Org Chart';
+
+            // Load the chart image and add title
+            const img = new Image();
+            img.onload = () => {
+                const titleHeight = 60; // Space for title at top
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height + titleHeight;
+                const ctx = canvas.getContext('2d');
+
+                // Fill white background
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Draw title
+                ctx.fillStyle = '#1e293b';
+                ctx.font = 'bold 36px "Space Grotesk", "Roboto", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(chartName, canvas.width / 2, titleHeight / 2);
+
+                // Draw chart image below title
+                ctx.drawImage(img, 0, titleHeight);
+
+                // Download
+                const a = document.createElement('a');
+                a.href = canvas.toDataURL('image/png');
+                a.download = `${chartName}.png`;
+                a.click();
+            };
+            img.src = base64;
         } catch (error) {
             console.error('PNG export failed:', error);
             window.toast.error('Failed to export PNG');
@@ -1276,33 +1325,42 @@ class ChartEditor {
     }
 
     /**
-     * Export as JPEG
+     * Export as JPEG with title
      */
     async exportJPEG() {
         try {
             const base64 = await this.renderChartOffScreen(2.0);
+            const chartName = this.chartData.chartName || 'Org Chart';
 
-            // Convert PNG to JPEG
+            // Convert PNG to JPEG with title
             const img = new Image();
             img.onload = () => {
+                const titleHeight = 60; // Space for title at top
                 const canvas = document.createElement('canvas');
                 canvas.width = img.width;
-                canvas.height = img.height;
+                canvas.height = img.height + titleHeight;
                 const ctx = canvas.getContext('2d');
 
                 // Fill white background for JPEG
                 ctx.fillStyle = '#FFFFFF';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                // Draw image
-                ctx.drawImage(img, 0, 0);
+                // Draw title
+                ctx.fillStyle = '#1e293b';
+                ctx.font = 'bold 36px "Space Grotesk", "Roboto", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(chartName, canvas.width / 2, titleHeight / 2);
+
+                // Draw chart image below title
+                ctx.drawImage(img, 0, titleHeight);
 
                 // Convert to JPEG and download
                 canvas.toBlob((blob) => {
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `${this.chartData.chartName || 'org-chart'}.jpg`;
+                    a.download = `${chartName}.jpg`;
                     a.click();
                     URL.revokeObjectURL(url);
                 }, 'image/jpeg', 0.95);
@@ -1316,14 +1374,16 @@ class ChartEditor {
 
     /**
      * Export as PDF with auto page sizing for readability
+     * Includes chart title at top center, matching bulk export styling
      */
     async exportPDF() {
         try {
             const base64 = await this.renderChartOffScreen(2.0);
             const { jsPDF } = window.jspdf;
             const img = new Image();
+            const chartName = this.chartData.chartName || 'Org Chart';
 
-            img.onload = () => {
+            img.onload = async () => {
                 const imgWidth = img.width;
                 const imgHeight = img.height;
 
@@ -1334,15 +1394,19 @@ class ChartEditor {
                 // Minimum scale to maintain text readability (0.8 = 80% of original size)
                 const MIN_SCALE = 0.8;
 
+                // Title area: title centered at 22mm from top, with 35mm total header zone
+                const titleY = 22; // mm from top where title is drawn
+                const headerZone = 35; // mm reserved for title area
+
                 // Reasonable margins in mm
                 const margins = {
-                    left: 10,
-                    right: 10,
-                    top: 15,
+                    left: 15,
+                    right: 15,
+                    top: headerZone, // Chart starts below header zone
                     bottom: 15
                 };
 
-                // Available space on default page
+                // Available space on default page (for chart image)
                 const availableWidth = defaultPageWidth - margins.left - margins.right;
                 const availableHeight = defaultPageHeight - margins.top - margins.bottom;
 
@@ -1368,7 +1432,11 @@ class ChartEditor {
                 const scaledWidth = imgWidth * 0.264583 * scale;
                 const scaledHeight = imgHeight * 0.264583 * scale;
                 const x = (pdfWidth - scaledWidth) / 2;
-                const y = (pdfHeight - scaledHeight) / 2;
+
+                // Recalculate available height for potentially resized page
+                const actualAvailableHeight = pdfHeight - margins.top - margins.bottom;
+                // Center image vertically in the available space below header
+                const imageY = margins.top + (actualAvailableHeight - scaledHeight) / 2;
 
                 // Create PDF with appropriate page size
                 const orientation = pdfWidth > pdfHeight ? 'l' : 'p';
@@ -1378,8 +1446,31 @@ class ChartEditor {
                     format: [pdfWidth, pdfHeight]
                 });
 
-                pdf.addImage(img, 'PNG', x, y, scaledWidth, scaledHeight);
-                pdf.save(`${this.chartData.chartName || 'org-chart'}.pdf`);
+                // Register fonts and draw title (matching bulk export styling)
+                try {
+                    if (window.ExportTemplate && window.ExportTemplate.registerExportFonts) {
+                        const config = await window.ExportTemplate.registerExportFonts(pdf);
+                        const headingFontFamily = config.fonts?.heading?.family || config.fonts?.primary?.family || 'helvetica';
+                        pdf.setFont(headingFontFamily, 'bold');
+                        pdf.setFontSize(22); // Slightly larger for better visibility
+                    } else {
+                        // Fallback if ExportTemplate not available
+                        pdf.setFont('helvetica', 'bold');
+                        pdf.setFontSize(22);
+                    }
+                } catch (fontError) {
+                    console.warn('[Export] Could not load export fonts, using fallback:', fontError);
+                    pdf.setFont('helvetica', 'bold');
+                    pdf.setFontSize(22);
+                }
+
+                // Draw title centered in header zone
+                pdf.setTextColor(30, 41, 59); // Dark slate color (#1e293b)
+                pdf.text(chartName, pdfWidth / 2, titleY, { align: 'center' });
+
+                // Add chart image below header zone, centered
+                pdf.addImage(img, 'PNG', x, imageY, scaledWidth, scaledHeight);
+                pdf.save(`${chartName}.pdf`);
             };
 
             img.src = base64;
@@ -1418,7 +1509,7 @@ class ChartEditor {
             const mapping = await response.json();
 
             // Clear existing options except default
-            selector.innerHTML = '<option value="">Default (Generic Org Chart)</option>';
+        selector.innerHTML = '<option value="">Cover</option>';
 
             // Add options from coverImages
             if (mapping.coverImages && Array.isArray(mapping.coverImages)) {

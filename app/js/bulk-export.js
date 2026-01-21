@@ -2575,6 +2575,8 @@ class BulkExportManager {
 
         // Sort groups by coverOrder position
         const sortedCoverIds = Array.from(chartGroups.keys()).sort((a, b) => {
+            if (a === 'no-cover' && b !== 'no-cover') return -1;
+            if (b === 'no-cover' && a !== 'no-cover') return 1;
             const aIndex = coverOrder.indexOf(a);
             const bIndex = coverOrder.indexOf(b);
 

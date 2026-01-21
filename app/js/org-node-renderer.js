@@ -20,17 +20,28 @@
     border-radius: 6px;
     overflow: hidden;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    padding: 0;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
 }
 
 .org-chart-node .node-header {
     background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-700) 100%);
     color: white;
-    padding: 10px 14px;
+    width: 100%;
+    padding: 0 14px;
+    min-height: 26px;
+    height: 16%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     font-weight: 600;
     font-size: 13px;
     border-bottom: 3px solid var(--accent-500);
     text-align: center;
     letter-spacing: 0.3px;
+    box-sizing: border-box;
 }
 
 /* Department-Specific Node Header Gradients */

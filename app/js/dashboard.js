@@ -8,6 +8,8 @@ class DashboardApp {
         this.currentFilter = '';
         this.currentDepartment = '';
         this.editingChartId = null;
+        this.editingChartSource = null;
+        this.cachedCharts = [];
         this.bulkExportManager = null;
         this.exportDependenciesLoaded = false;
         this.deletedCharts = []; // Stack for undo functionality
@@ -27,7 +29,6 @@ class DashboardApp {
 
         // Small delay to allow skeleton to render
         setTimeout(() => {
-            this.loadDepartments();
             this.renderCharts();
             this.setupEventDelegation();
             // initializeBulkExport() is now called after lazy loading dependencies
@@ -305,33 +306,6 @@ class DashboardApp {
         });
     }
 
-    /**
-     * Load all department tags into filter dropdown
-     */
-    loadDepartments() {
-        const departments = storage.getAllDepartments();
-        const filterSelect = document.getElementById('departmentFilter');
-        const datalist = document.getElementById('departmentList');
-
-        // Clear existing options (except "All Departments")
-        filterSelect.innerHTML = '<option value="">All Departments</option>';
-        datalist.innerHTML = '';
-
-        // Add department options
-        departments.forEach(dept => {
-            // Add to filter dropdown
-            const option = document.createElement('option');
-            option.value = dept;
-            option.textContent = dept;
-            filterSelect.appendChild(option);
-
-            // Add to datalist for autocomplete
-            const datalistOption = document.createElement('option');
-            datalistOption.value = dept;
-            datalist.appendChild(datalistOption);
-        });
-    }
-
     countPeople(nodes = []) {
         if (!Array.isArray(nodes)) {
             return 0;
@@ -388,7 +362,8 @@ class DashboardApp {
                         peopleCount,
                         lastModified: chart.lastModified,
                         createdAt: chart.createdAt,
-                        departmentTag: chart.data?.departmentTag || chart.data?.metadata?.departmentTag || '',
+                        // Extract departmentTag from all possible locations
+                        departmentTag: chart.data?.departmentTag || chart.data?.metadata?.departmentTag || chart.departmentTag || '',
                         source: 'api',
                         synced: true,
                         userRole: chart.userRole,
@@ -455,7 +430,7 @@ class DashboardApp {
             this.userCanCreate = hasEditorRole || !allViewer;
             this.updateCreateButtonsState();
 
-            // Apply filters
+            // Apply search filter
             if (this.currentFilter) {
                 const filterLower = this.currentFilter.toLowerCase();
                 charts = charts.filter(chart =>
@@ -464,9 +439,7 @@ class DashboardApp {
                 );
             }
 
-            if (this.currentDepartment) {
-                charts = charts.filter(chart => chart.departmentTag === this.currentDepartment);
-            }
+            this.cachedCharts = charts;
 
                 if (charts.length === 0) {
                     container.innerHTML = '';
@@ -629,22 +602,10 @@ class DashboardApp {
                         </div>
                     </div>
                     <div class="chart-card-menu">
-                        <button class="action-menu-trigger" data-action="edit" data-chart-id="${escapedChartId}" title="Edit Chart">
+                        <button class="action-menu-trigger" data-action="settings" data-chart-id="${escapedChartId}" title="Chart Settings" aria-label="Chart Settings">
                             <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                            </svg>
-                        </button>
-                        <button class="action-menu-trigger" data-action="duplicate" data-chart-id="${escapedChartId}" title="Duplicate Chart">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                            </svg>
-                        </button>
-                        <button class="action-menu-trigger" data-action="delete" data-chart-id="${escapedChartId}" title="Delete Chart">
-                            <svg class="icon-svg sm" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <polyline points="3 6 5 6 21 6"></polyline>
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l0 0a2 2 0 1 1-2.83 2.83l0 0a1.65 1.65 0 0 0-1.82.33 1.65 1.65 0 0 0-.5 1.57 2 2 0 1 1-4 0 1.65 1.65 0 0 0-1-1.22 1.65 1.65 0 0 0-1.82-.33l0 0a2 2 0 1 1-2.83-2.83l0 0a1.65 1.65 0 0 0-.33-1.82 1.65 1.65 0 0 0-1.57-.5 2 2 0 1 1 0-4 1.65 1.65 0 0 0 1.22-1 1.65 1.65 0 0 0 .33-1.82l0 0a2 2 0 1 1 2.83-2.83l0 0a1.65 1.65 0 0 0 1.82-.33 1.65 1.65 0 0 0 .5-1.57 2 2 0 1 1 4 0 1.65 1.65 0 0 0 1 1.22 1.65 1.65 0 0 0 1.82.33l0 0a2 2 0 1 1 2.83 2.83l0 0a1.65 1.65 0 0 0 .33 1.82 1.65 1.65 0 0 0 1.57.5 2 2 0 1 1 0 4 1.65 1.65 0 0 0-1.22 1z"></path>
                             </svg>
                         </button>
                     </div>
@@ -799,21 +760,16 @@ class DashboardApp {
     }
 
     /**
-     * Filter charts by department
-     */
-    filterByDepartment(department) {
-        this.currentDepartment = department;
-        this.renderCharts();
-    }
-
-    /**
      * Show create chart modal
      */
-    showCreateModal() {
+    async showCreateModal() {
         this.editingChartId = null;
+        this.editingChartSource = null;
         document.getElementById('modalTitle').textContent = 'Create New Chart';
         document.getElementById('chartForm').reset();
         document.getElementById('chartId').value = '';
+        await this.populateCoverSelector('');
+        document.getElementById('settingsCoverOrderIndex').value = '';
         document.querySelector('#chartForm button[type="submit"]').textContent = 'Create Chart';
         this.showModal();
     }
@@ -821,20 +777,109 @@ class DashboardApp {
     /**
      * Edit chart metadata
      */
-    editChartMetadata(chartId) {
-        const chart = storage.getChart(chartId);
+    async editChartMetadata(chartId) {
+        const cachedChart = (this.cachedCharts || []).find(chart => chart.chartId === chartId);
+        const chart = cachedChart || storage.getChart(chartId);
         if (!chart) {
             window.toast.error('Chart not found');
             return;
         }
 
         this.editingChartId = chartId;
+        this.editingChartSource = cachedChart?.source || chart.source || 'local';
+        let chartName = chart.chartName || chart.name || '';
+        let departmentTag =
+            chart.departmentTag ||
+            chart.chartData?.departmentTag ||
+            chart.chartData?.metadata?.departmentTag ||
+            '';
+        let coverId = chart.coverId || chart.chartData?.coverId || '';
+        let coverOrderIndex = chart.coverOrderIndex ?? chart.chartData?.coverOrderIndex ?? '';
+
+        if (this.editingChartSource === 'api' && window.apiClient) {
+            try {
+                const response = await window.apiClient.getChart(chartId);
+                const chartPayload = response.chart || response;
+                const chartData = chartPayload.data || chartPayload.chart?.data;
+
+                chartName = chartPayload.name || chartPayload.chart?.name || chartName;
+
+                if (chartData) {
+                    departmentTag = chartData.departmentTag || chartData.metadata?.departmentTag || departmentTag;
+                    coverId = chartData.coverId || coverId;
+                    coverOrderIndex = chartData.coverOrderIndex ?? coverOrderIndex;
+                }
+            } catch (error) {
+                console.warn('Failed to load chart details for settings:', error);
+            }
+        }
+
         document.getElementById('modalTitle').textContent = 'Edit Chart Settings';
-        document.getElementById('chartName').value = chart.chartName;
-        document.getElementById('departmentTag').value = chart.departmentTag || '';
+        document.getElementById('chartName').value = chartName;
+        document.getElementById('departmentTag').value = departmentTag;
         document.getElementById('chartId').value = chartId;
+        await this.populateCoverSelector(coverId);
+        document.getElementById('settingsCoverOrderIndex').value = coverOrderIndex ?? '';
         document.querySelector('#chartForm button[type="submit"]').textContent = 'Save Changes';
         this.showModal();
+    }
+
+    async populateCoverSelector(selectedCoverId = '') {
+        const selector = document.getElementById('settingsCoverId');
+        if (!selector) return;
+
+        try {
+            if (!this.coverImageMapping) {
+                const response = await fetch('assets/export/cover-image-mapping.json');
+                this.coverImageMapping = await response.json();
+            }
+
+            const mapping = this.coverImageMapping;
+            selector.innerHTML = '<option value="">Cover</option>';
+
+            if (mapping.coverImages && Array.isArray(mapping.coverImages)) {
+                mapping.coverImages.forEach((cover) => {
+                    const option = document.createElement('option');
+                    option.value = cover.id;
+
+                    const displayName = cover.label || cover.id
+                        .split('-')
+                        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                        .join(' ');
+
+                    option.textContent = displayName;
+                    selector.appendChild(option);
+                });
+            }
+
+            selector.value = selectedCoverId || '';
+            this.bindCoverOrderToggle();
+            this.updateCoverOrderState();
+        } catch (error) {
+            console.error('[Dashboard] Failed to load cover options:', error);
+        }
+    }
+
+    bindCoverOrderToggle() {
+        const selector = document.getElementById('settingsCoverId');
+        if (!selector || selector.dataset.coverToggleBound) return;
+
+        selector.addEventListener('change', () => {
+            this.updateCoverOrderState();
+        });
+        selector.dataset.coverToggleBound = 'true';
+    }
+
+    updateCoverOrderState() {
+        const selector = document.getElementById('settingsCoverId');
+        const orderInput = document.getElementById('settingsCoverOrderIndex');
+        if (!selector || !orderInput) return;
+
+        const hasCover = Boolean(selector.value);
+        orderInput.disabled = !hasCover;
+        if (!hasCover) {
+            orderInput.value = '';
+        }
     }
 
     /**
@@ -861,6 +906,7 @@ class DashboardApp {
         modal.style.display = 'none';
         document.getElementById('chartForm').reset();
         this.editingChartId = null;
+        this.editingChartSource = null;
     }
 
     /**
@@ -871,6 +917,12 @@ class DashboardApp {
 
         const chartName = document.getElementById('chartName').value.trim();
         const departmentTag = document.getElementById('departmentTag').value.trim();
+        const coverId = document.getElementById('settingsCoverId')?.value || '';
+        const coverOrderIndexValue = document.getElementById('settingsCoverOrderIndex')?.value;
+        const coverOrderIndexParsed = coverOrderIndexValue ? parseInt(coverOrderIndexValue, 10) : NaN;
+        const coverOrderIndex = Number.isFinite(coverOrderIndexParsed) && coverOrderIndexParsed >= 1
+            ? coverOrderIndexParsed
+            : null;
         const chartId = this.editingChartId;
 
         if (!chartName) {
@@ -879,13 +931,48 @@ class DashboardApp {
         }
 
         if (chartId) {
-            // Update existing chart metadata
+            if (this.editingChartSource === 'api' && window.apiClient) {
+                try {
+                    const response = await window.apiClient.getChart(chartId);
+                    const chartPayload = response.chart || response;
+                    const chartData = chartPayload.data || chartPayload.chart?.data;
+
+                    if (!chartData) {
+                        throw new Error('Chart data not found');
+                    }
+
+                    const updatedData = {
+                        ...chartData,
+                        chartName,
+                        departmentTag,
+                        coverId: coverId || null,
+                        coverOrderIndex,
+                        metadata: {
+                            ...(chartData.metadata || {}),
+                            departmentTag
+                        }
+                    };
+
+                    await window.apiClient.updateChart(chartId, chartName, updatedData);
+                    window.toast?.success('Chart updated successfully');
+                    this.closeModal();
+                    this.renderCharts();
+                    return;
+                } catch (error) {
+                    console.error('Failed to update API chart metadata:', error);
+                    window.toast?.error('Failed to update chart');
+                    return;
+                }
+            }
+
+            // Update existing local chart metadata
             storage.updateChart(chartId, {
                 chartName,
-                departmentTag
+                departmentTag,
+                coverId: coverId || null,
+                coverOrderIndex
             });
             this.closeModal();
-            this.loadDepartments();
             this.renderCharts();
         } else {
             // Create new chart via API (not localStorage)
@@ -899,6 +986,8 @@ class DashboardApp {
             const chartData = {
                 chartName,
                 departmentTag,
+                coverId: coverId || null,
+                coverOrderIndex,
                 nodes: [
                     {
                         id: storage.generateNodeId(),
@@ -1111,7 +1200,6 @@ class DashboardApp {
 
                 // Refresh list (undo not supported for API deletes)
                 await this.renderCharts();
-                this.loadDepartments();
 
                 window.toast?.success('Chart deleted successfully.');
                 return;
@@ -1173,7 +1261,6 @@ class DashboardApp {
 
             // Re-render
             this.renderCharts();
-            this.loadDepartments();
 
             // Show success with undo option
             this.showUndoNotification(chartBackup);
@@ -1285,7 +1372,6 @@ class DashboardApp {
 
             // Re-render
             this.renderCharts();
-            this.loadDepartments();
 
             // Show success
             window.toast.success(`Chart "${chart.chartName}" restored`);

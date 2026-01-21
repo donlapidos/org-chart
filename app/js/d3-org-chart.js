@@ -169,8 +169,10 @@
                 /* You can access and modify actual link DOM element in runtime using this method. */
                 linkUpdate: function (d, i, arr) {
                     d3.select(this)
-                        .attr("stroke", d => d.data._upToTheRootHighlighted ? '#E27396' : '#E4E2E9')
-                        .attr("stroke-width", d => d.data._upToTheRootHighlighted ? 5 : 1)
+                        .attr("stroke", d => d.data._upToTheRootHighlighted ? '#E27396' : '#1e3a8a')
+                        .attr("stroke-width", d => d.data._upToTheRootHighlighted ? 4 : 2.5)
+                        .attr("stroke-linecap", "round")
+                        .attr("stroke-linejoin", "round")
 
                     if (d.data._upToTheRootHighlighted) {
                         d3.select(this).raise()

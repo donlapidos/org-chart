@@ -100,12 +100,6 @@
                     oninput="app.filterCharts(this.value)"
                 >
             </div>
-            <div class="toolbar-group">
-                <label class="form-label m-0 mr-2">Filter by Department:</label>
-                <select class="form-select w-auto" id="departmentFilter" onchange="app.filterByDepartment(this.value)">
-                    <option value="">All Departments</option>
-                </select>
-            </div>
         </div>
 
         <!-- Charts Grid -->
@@ -168,6 +162,27 @@
                         >
                         <datalist id="departmentList"></datalist>
                         <p class="form-help">Tag this chart by department for easier filtering</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="settingsCoverId">Export Cover Image</label>
+                        <select id="settingsCoverId" class="form-input">
+                            <option value="">Cover</option>
+                        </select>
+                        <p class="form-help">Stable cover image for PDF export. Changes here won't affect chart name or department.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="settingsCoverOrderIndex">Order within Cover (optional)</label>
+                        <input
+                            type="number"
+                            id="settingsCoverOrderIndex"
+                            class="form-input"
+                            min="1"
+                            step="1"
+                            placeholder="Leave blank for automatic ordering"
+                        >
+                        <p class="form-help">Position within the cover group (1, 2, 3...). Lower numbers appear first. Leave blank to order by creation date.</p>
                     </div>
 
                     <input type="hidden" id="chartId">
