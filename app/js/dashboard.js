@@ -12,6 +12,8 @@ class DashboardApp {
         this.cachedCharts = [];
         this.bulkExportManager = null;
         this.exportDependenciesLoaded = false;
+        this.apiUnavailable = false;
+        this.exportPreflightState = null;
         this.deletedCharts = []; // Stack for undo functionality
         this.undoTimeout = null; // Timer for auto-clearing undo
         this.init();
@@ -162,11 +164,19 @@ class DashboardApp {
         console.warn(
             '%c API Server Not Running ',
             'background: #f59e0b; color: #000; padding: 4px 8px; border-radius: 4px;',
-            '\nCharts are stored in MongoDB Atlas (cloud) — your data is safe.',
+            '\nCharts are stored in MongoDB Atlas (cloud) - your data is safe.',
             '\n\nTo start the API:',
             '\n  cd api && npm run start',
             '\n  OR: swa start app --api-location api'
         );
+    }
+
+    clearApiUnavailableWarning() {
+        const banner = document.getElementById('api-unavailable-banner');
+        if (banner) {
+            banner.remove();
+        }
+        this._apiWarningShown = false;
     }
 
     /**
@@ -191,6 +201,23 @@ class DashboardApp {
                 btn.removeAttribute('aria-disabled');
             }
         });
+    }
+
+    updateExportButtonsState() {
+        const exportBtn = document.querySelector('button[onclick="app.exportAllChartsToPDF()"]');
+        if (!exportBtn) {
+            return;
+        }
+
+        const canExport = !this.apiUnavailable;
+        exportBtn.disabled = !canExport;
+        if (!canExport) {
+            exportBtn.setAttribute('aria-disabled', 'true');
+            exportBtn.title = 'Export unavailable while the chart server is offline.';
+        } else {
+            exportBtn.removeAttribute('aria-disabled');
+            exportBtn.title = 'Export all charts to PDF';
+        }
     }
 
     /**
@@ -341,6 +368,8 @@ class DashboardApp {
                     const resp = await window.apiClient.getCharts({ includeData: true });
                     // Handle both array and object response shapes
                     const apiCharts = Array.isArray(resp) ? resp : (resp?.charts || []);
+                    this.apiUnavailable = false;
+                    this.clearApiUnavailableWarning();
 
                     // Transform API response to dashboard format
                     charts = apiCharts.map(chart => {
@@ -378,6 +407,7 @@ class DashboardApp {
                     // Detect API server not running (connection refused / failed to fetch)
                     if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
                         // Show user-friendly warning that API is down
+                        this.apiUnavailable = true;
                         this.showApiUnavailableWarning();
                     }
 
@@ -428,7 +458,12 @@ class DashboardApp {
             const allViewer = charts.length > 0 && charts.every(chart => (chart.userRole || '').toLowerCase() === 'viewer');
             // If no charts, assume allow (new editors/admins with no charts yet)
             this.userCanCreate = hasEditorRole || !allViewer;
+            if (this.apiUnavailable) {
+                this.userCanCreate = false;
+            }
             this.updateCreateButtonsState();
+            this.updateExportButtonsState();
+            this.updateRoleChip(this.getEffectiveRole(charts));
 
             // Apply search filter
             if (this.currentFilter) {
@@ -444,6 +479,15 @@ class DashboardApp {
                 if (charts.length === 0) {
                     container.innerHTML = '';
                     emptyState.style.display = 'block';
+
+                if (this.apiUnavailable) {
+                    emptyState.innerHTML = `
+                        <h2>Charts temporarily unavailable</h2>
+                        <p>We couldn't reach the chart server. Your charts are safely stored in the cloud.</p>
+                        <p>Please try again in a moment or contact your administrator.</p>
+                    `;
+                    return;
+                }
 
                 // Update empty state message for anonymous users
                 if (!isAuthenticated) {
@@ -478,6 +522,51 @@ class DashboardApp {
             console.error('Error rendering charts:', error);
             container.innerHTML = '<p style="color: red;">Error loading charts. Please refresh the page.</p>';
         }
+    }
+
+    getEffectiveRole(charts = []) {
+        if (!Array.isArray(charts) || charts.length === 0) {
+            return this.userCanCreate ? 'Editor' : 'Viewer';
+        }
+
+        let hasEditor = false;
+        let hasViewer = false;
+
+        for (const chart of charts) {
+            const role = (chart.userRole || '').toLowerCase();
+            if (role === 'owner') {
+                return 'Owner';
+            }
+            if (role === 'editor') {
+                hasEditor = true;
+            } else if (role === 'viewer') {
+                hasViewer = true;
+            }
+        }
+
+        if (hasEditor) {
+            return 'Editor';
+        }
+        if (hasViewer) {
+            return 'Viewer';
+        }
+        return this.userCanCreate ? 'Editor' : '';
+    }
+
+    updateRoleChip(role) {
+        const chip = document.getElementById('user-role-chip');
+        const isAuthenticated = window.apiClient?.isUserAuthenticated();
+        if (!chip || !isAuthenticated || !role) {
+            if (chip) {
+                chip.style.display = 'none';
+            }
+            return;
+        }
+
+        chip.textContent = role;
+        chip.title = `Role: ${role}`;
+        chip.setAttribute('aria-label', `Role: ${role}`);
+        chip.style.display = 'inline-flex';
     }
 
     /**
@@ -1702,6 +1791,215 @@ class DashboardApp {
      * Export all charts to PDF
      */
     async exportAllChartsToPDF() {
+        if (this.apiUnavailable) {
+            window.toast?.warning('Export unavailable while the chart server is offline.');
+            return;
+        }
+        await this.showExportPreflight();
+    }
+
+    async showExportPreflight() {
+        const chartCount = await this.getExportChartCount();
+        if (!chartCount) {
+            window.toast?.warning('No charts available to export');
+            return;
+        }
+
+        const recommendedQuality = this.getRecommendedExportQuality(chartCount);
+        this.exportPreflightState = {
+            chartCount,
+            recommendedQuality,
+            selectedQuality: recommendedQuality
+        };
+
+        const options = document.getElementById('exportPreflightOptions');
+        const qualitySelect = document.getElementById('exportPreflightQuality');
+        const customizeBtn = document.getElementById('exportPreflightCustomize');
+        const confirmBtn = document.getElementById('exportPreflightConfirm');
+
+        if (options) {
+            options.classList.add('hidden');
+        }
+        if (qualitySelect) {
+            qualitySelect.value = recommendedQuality;
+        }
+        if (customizeBtn) {
+            customizeBtn.textContent = 'Choose Quality...';
+        }
+        if (confirmBtn) {
+            confirmBtn.textContent = 'Export (Recommended)';
+        }
+
+        this.updateExportPreflightSummary(recommendedQuality);
+        this.showExportPreflightModal();
+    }
+
+    showExportPreflightModal() {
+        const modal = document.getElementById('exportPreflightModal');
+        if (!modal) {
+            return;
+        }
+        modal.style.display = 'flex';
+        modal.classList.add('active');
+    }
+
+    closeExportPreflight() {
+        const modal = document.getElementById('exportPreflightModal');
+        if (!modal) {
+            return;
+        }
+        modal.classList.remove('active');
+        modal.style.display = 'none';
+        this.exportPreflightState = null;
+    }
+
+    toggleExportPreflightOptions() {
+        const options = document.getElementById('exportPreflightOptions');
+        const confirmBtn = document.getElementById('exportPreflightConfirm');
+        const customizeBtn = document.getElementById('exportPreflightCustomize');
+        const qualitySelect = document.getElementById('exportPreflightQuality');
+
+        if (!options) {
+            return;
+        }
+
+        const willShow = options.classList.contains('hidden');
+        options.classList.toggle('hidden', !willShow);
+
+        if (confirmBtn) {
+            confirmBtn.textContent = willShow ? 'Export' : 'Export (Recommended)';
+        }
+        if (customizeBtn) {
+            customizeBtn.textContent = willShow ? 'Use Recommended' : 'Choose Quality...';
+        }
+
+        if (!willShow && this.exportPreflightState) {
+            const recommendedQuality = this.exportPreflightState.recommendedQuality;
+            this.exportPreflightState.selectedQuality = recommendedQuality;
+            if (qualitySelect) {
+                qualitySelect.value = recommendedQuality;
+            }
+            this.updateExportPreflightSummary(recommendedQuality);
+        }
+    }
+
+    updateExportPreflightQuality(quality) {
+        if (!this.exportPreflightState) {
+            return;
+        }
+        this.exportPreflightState.selectedQuality = quality;
+        this.updateExportPreflightSummary(quality);
+    }
+
+    updateExportPreflightSummary(quality) {
+        if (!this.exportPreflightState) {
+            return;
+        }
+
+        const chartCount = this.exportPreflightState.chartCount;
+        const countEl = document.getElementById('exportPreflightCount');
+        const sizeEl = document.getElementById('exportPreflightSize');
+        const recEl = document.getElementById('exportPreflightRecommendation');
+        const warnEl = document.getElementById('exportPreflightWarning');
+
+        if (countEl) {
+            countEl.textContent = chartCount;
+        }
+        if (recEl) {
+            recEl.textContent = this.getQualityLabel(this.exportPreflightState.recommendedQuality);
+        }
+
+        const estimate = this.getExportSizeEstimate(chartCount, quality);
+        if (sizeEl) {
+            sizeEl.textContent = estimate.label;
+        }
+        if (warnEl) {
+            warnEl.textContent = estimate.warning;
+        }
+    }
+
+    getQualityLabel(quality) {
+        if (!quality) return '';
+        return quality.charAt(0).toUpperCase() + quality.slice(1);
+    }
+
+    getRecommendedExportQuality(chartCount) {
+        if (chartCount >= 30) {
+            return 'medium';
+        }
+        if (chartCount >= 15) {
+            return 'medium';
+        }
+        return 'high';
+    }
+
+    getExportSizeEstimate(chartCount, quality) {
+        const perChartMb = {
+            low: 1.5,
+            medium: 3,
+            high: 6,
+            print: 12
+        };
+
+        const estimateMb = Math.round((perChartMb[quality] || 3) * chartCount);
+        let label = 'Medium';
+        if (estimateMb <= 25) {
+            label = `Small (~${estimateMb} MB)`;
+        } else if (estimateMb <= 80) {
+            label = `Medium (~${estimateMb} MB)`;
+        } else if (estimateMb <= 160) {
+            label = `Large (~${estimateMb} MB)`;
+        } else {
+            label = `Very large (~${estimateMb} MB)`;
+        }
+
+        let warning = '';
+        if (chartCount >= 20 && (quality === 'high' || quality === 'print')) {
+            warning = 'High quality may fail on large exports. Balanced is safer.';
+        } else if (chartCount >= 30) {
+            warning = 'Large export detected. Balanced quality is recommended for reliability.';
+        }
+
+        return { label, warning };
+    }
+
+    async getExportChartCount() {
+        if (window.apiClient) {
+            try {
+                const response = await window.apiClient.getCharts({ limit: 1, offset: 0, includeData: false });
+                if (Array.isArray(response)) {
+                    return response.length;
+                }
+                if (response?.pagination?.total !== undefined) {
+                    return response.pagination.total;
+                }
+                if (Array.isArray(response?.charts)) {
+                    return response.charts.length;
+                }
+            } catch (error) {
+                console.warn('[Dashboard] Failed to fetch chart count for export preflight:', error);
+            }
+        }
+
+        if (Array.isArray(this.cachedCharts) && this.cachedCharts.length > 0) {
+            return this.cachedCharts.length;
+        }
+
+        return storage.getChartsArray().length;
+    }
+
+    async confirmExportPreflight() {
+        if (!this.exportPreflightState) {
+            return;
+        }
+
+        const quality = this.exportPreflightState.selectedQuality || this.exportPreflightState.recommendedQuality;
+        this.closeExportPreflight();
+
+        await this.startExportWithQuality(quality);
+    }
+
+    async startExportWithQuality(quality = 'medium') {
         // Lazy load dependencies first
         const loaded = await this.loadExportDependencies();
         if (!loaded) {
@@ -1728,19 +2026,8 @@ class DashboardApp {
             return;
         }
 
-        const confirmed = await window.toast.confirm({
-            message: `Export all ${charts.length} chart${charts.length !== 1 ? 's' : ''} to PDF? This may take a few moments depending on chart complexity.`,
-            title: 'Export All Charts',
-            confirmText: 'Export',
-            cancelText: 'Cancel'
-        });
-
-        if (!confirmed) {
-            return;
-        }
-
         try {
-            await this.bulkExportManager.exportAllCharts();
+            await this.bulkExportManager.exportAllCharts(quality);
         } catch (error) {
             console.error('Bulk export failed:', error);
             window.toast.error(`Export failed: ${error.message}`);

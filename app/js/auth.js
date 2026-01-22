@@ -128,6 +128,12 @@
             userName.className = 'user-name';
             userName.textContent = user.userDetails; // Safe: textContent auto-escapes
 
+            const roleChip = document.createElement('span');
+            roleChip.id = 'user-role-chip';
+            roleChip.className = 'pill-tag role-chip';
+            roleChip.textContent = 'Role';
+            roleChip.style.display = 'none';
+
             const handleLogout = function() {
                 if (confirm('Are you sure you want to log out?')) {
                     // Clear mock user from sessionStorage
@@ -157,6 +163,7 @@
             logoutBtn.addEventListener('click', handleLogout);
 
             userDetails.appendChild(userName);
+            userDetails.appendChild(roleChip);
             userDetails.appendChild(logoutBtn);
             userInfo.appendChild(userDetails);
             headerContent.appendChild(userInfo);

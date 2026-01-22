@@ -195,6 +195,40 @@
         </div>
     </div>
 
+    <!-- Export Preflight Modal -->
+    <div id="exportPreflightModal" class="modal" role="dialog" aria-labelledby="exportPreflightTitle" aria-modal="true">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title" id="exportPreflightTitle">Confirm Export</h2>
+                <button class="modal-close" onclick="app.closeExportPreflight()">A-</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <p><strong>Charts to export:</strong> <span id="exportPreflightCount">-</span></p>
+                    <p><strong>Estimated size:</strong> <span id="exportPreflightSize">-</span></p>
+                    <p><strong>Recommended quality:</strong> <span id="exportPreflightRecommendation">-</span></p>
+                    <p class="form-help" id="exportPreflightWarning"></p>
+                </div>
+
+                <div class="form-group hidden" id="exportPreflightOptions">
+                    <label class="form-label" for="exportPreflightQuality">Quality</label>
+                    <select id="exportPreflightQuality" class="form-input" onchange="app.updateExportPreflightQuality(this.value)">
+                        <option value="low">Low (small file)</option>
+                        <option value="medium">Balanced (recommended for large exports)</option>
+                        <option value="high">High (best quality)</option>
+                        <option value="print">Print (largest files)</option>
+                    </select>
+                    <p class="form-help">Higher quality increases file size and may fail on large exports.</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="app.closeExportPreflight()">Cancel</button>
+                <button type="button" class="btn btn-outline-secondary" id="exportPreflightCustomize" onclick="app.toggleExportPreflightOptions()">Choose Quality...</button>
+                <button type="button" class="btn btn-primary" id="exportPreflightConfirm" onclick="app.confirmExportPreflight()">Export (Recommended)</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="js/theme.js"></script>
     <script src="js/toast.js"></script>
