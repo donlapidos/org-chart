@@ -1,0 +1,10 @@
+# Oryx build caches (created during CI)
+.oryx_all_node_modules/
+.oryx_prod_node_modules/
+
+# Dev/test artifacts
+coverage/
+**/*.test.js
+**/__tests__/
+local.settings.json
+*.log
