@@ -59,7 +59,7 @@ class APIClient {
      * Redirect to logout page
      */
     logout() {
-        window.location.href = '/.auth/logout';
+        window.location.href = '/.auth/logout?post_logout_redirect_uri=/logged-out.html';
     }
 
     /**
@@ -91,6 +91,10 @@ class APIClient {
 
             // Handle 401 Unauthorized
             if (response.status === 401) {
+                // Don't auto-redirect to login if on the logged-out page
+                if (window.location.pathname === '/logged-out.html') {
+                    throw new Error('Unauthorized');
+                }
                 console.warn('Unauthorized - redirecting to login');
                 // Redirect back to current page after login for all methods
                 const currentPath = window.location.pathname + window.location.search;

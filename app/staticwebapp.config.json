@@ -49,7 +49,7 @@
   ],
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/api/*", "/.auth/*", "/assets/*", "/css/*", "/js/*", "/fonts/*", "/shared.html"]
+    "exclude": ["/api/*", "/.auth/*", "/assets/*", "/css/*", "/js/*", "/fonts/*", "/shared.html", "/logged-out.html"]
   },
   "responseOverrides": {
     "401": {
