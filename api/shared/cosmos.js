@@ -58,7 +58,7 @@ async function initializeDatabaseAsync(client) {
     try {
         // Import here to avoid circular dependency
         const { initializeDatabase } = require('./dbSetup');
-        await initializeDatabase();
+        await initializeDatabase(client);
     } catch (error) {
         // Log error but don't block API requests
         console.error('Database initialization error:', error.message);

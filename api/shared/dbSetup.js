@@ -5,7 +5,6 @@
  * This should be run once during deployment or on first function execution
  */
 
-const { getCosmosClient } = require('./cosmos');
 const { logInfo, logError } = require('./logger');
 
 let isInitialized = false;
@@ -13,15 +12,13 @@ let isInitialized = false;
 /**
  * Initialize all database collections with proper indexes and configuration
  */
-async function initializeDatabase() {
+async function initializeDatabase(client) {
     // Only run once per function app instance
     if (isInitialized) {
         return { success: true, message: 'Database already initialized' };
     }
 
-    let client;
     try {
-        client = await getCosmosClient();
         const db = client.db('orgchart');
 
         // 1. Setup charts collection
