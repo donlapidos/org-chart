@@ -182,6 +182,11 @@ module.exports = async function (context, req) {
  * @returns {string} Base URL (protocol + host)
  */
 function getBaseUrl(req) {
+    // Prefer explicit env var (required for Azure SWA BYO backend — x-forwarded-host is unreliable)
+    if (process.env.FRONTEND_URL) {
+        return process.env.FRONTEND_URL.replace(/\/$/, '');
+    }
+
     // In Azure SWA, use x-forwarded-host or fallback
     const host = req.headers['x-forwarded-host'] || req.headers['host'] || 'localhost:4280';
 
